@@ -90,7 +90,7 @@ describe('PublicadorEventosRabbitMQ sin broker', () => {
   afterAll(() => pool.end());
 
   const pendientes = async () =>
-    (await pool.query('SELECT tipo, intentos FROM eventos_salientes WHERE publicado_en IS NULL ORDER BY sequence')).rows;
+    (await pool.query('SELECT tipo AS "eventType", intentos FROM eventos_salientes WHERE publicado_en IS NULL ORDER BY secuencia')).rows;
 
   it('guarda el evento en la misma transacción que el viaje', async () => {
     const viaje = nuevoViaje();
