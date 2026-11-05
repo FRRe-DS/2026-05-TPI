@@ -21,7 +21,7 @@ Cuando se cierra un acuerdo:
 | Módulo | Grupos | Tema principal | Prioridad | Estado |
 |---|---|---|---|---|
 | M5 Despacho | 4 y 13 | Cómo se crea el viaje y cómo vuelve una solicitud al despacho | Alta | Sin enviar |
-| M8 Notificaciones | 7 y 10 | Generación y validación del QR | Alta | Sin enviar |
+| M8 Notificaciones | 7 y 10 | Generación y validación del QR, eventos | Alta | Repos revisados; M6 adaptado a ambos; mensajes listos para enviar |
 | Cátedra | — | Quién hace M1, formato del token y aprobación del stack (RNF-01) | Alta | Sin enviar |
 | M6 (otra impl.) | 12 | Unificar el contrato de M6 (guía paso a paso de qué cambia cada uno) | Alta | Sin enviar |
 | M7 Pagos | 6 y 11 | Datos para cobro y cargo de cancelación | Media | Sin enviar |
@@ -185,53 +185,89 @@ cancela antes de iniciar, la solicitud debe **volver** a M5 para que busque otro
 **validarlo** para iniciar el viaje (RF-6.4). Además, M8 notifica los hitos y genera el
 comprobante a partir de nuestros eventos.
 
-**Propuesta:**
+Hay **dos implementaciones de M8** (Grupos 7 y 10) y la app web final tiene que funcionar con
+las dos. Revisamos sus repositorios (G7: commit del 24/10; G10: commit del 22/10).
 
-1. **Generación:** M8 escucha `trips.trip.created`, genera un QR temporal de un solo uso para ese
-   `tripId` y se lo muestra al cliente.
-2. **Validación:** cuando el conductor escanea el QR, M6 llama a M8:
-   ```
-   POST {M8}/qr/validaciones
-   { "viajeId": "uuid", "codigo": "<texto leído del QR>" }
-   → 200 { "valido": true | false }
-   ```
-   - M8 marca el código como **usado** en esa misma llamada, de forma atómica para que dos
-     validaciones simultáneas no den las dos `true`.
-   - Si M8 no responde en **2 segundos**, M6 devuelve 503 al conductor y el viaje no cambia de
-     estado.
-3. **Notificaciones (RF-8.1):** M8 escucha `TripCreated`, `DriverArrived`, `TripStarted`,
-   `TripCompleted` y `TripCancelled`.
-4. **Comprobante (RF-8.4):** a partir de `TripCompleted`, o del evento de cobro de M7 si
-   prefieren esperar el importe.
-5. **Eventos repetidos:** un evento puede llegar dos veces. Hay que ignorar los `eventId` ya
-   procesados, para no mandar dos notificaciones ni generar dos QR.
+### Lo que publicó cada grupo
 
-**Preguntas abiertas:**
-- ¿El QR contiene un código opaco, o algo firmado (por ejemplo, un JWT)? Para nosotros sólo es un
-  texto que les reenviamos.
-- ¿Cuánto dura el QR? ¿Se regenera si vence antes de que llegue el conductor?
-- ¿Les sirve el endpoint propuesto, o ya definieron otro?
+| | Grupo 7 (.NET, puerto 8088) | Grupo 10 (NestJS) |
+|---|---|---|
+| Generar QR | `POST /api/v1/viajes/{viajeId}/qr` `{ clienteId, validezSegundos }` (600 s por defecto). Si se genera otro, el anterior queda `REEMPLAZADO`. | `POST /api/v1/documents/qr/generate` `{ tripId, passengerId, ttlSeconds }` (300 s por defecto). |
+| Validar QR (contrato) | `POST /api/v1/qr/validaciones` `{ token, viajeId }` → `200` válido; `404` no existe; `409` usado o reemplazado; `422` vencido o de otro viaje. | `POST /api/v1/documents/qr/verify` `{ token, tripId }` → `200 { valid: true }`; `400` de otro viaje; `404` no existe; `410` vencido o usado. |
+| Validar QR (código actual) | **Distinto del contrato:** `POST /api/Documentos/qr/validar` `{ token }` → `200 { valido, viajeId }` o `410`. **No verifica que el QR sea del viaje.** | Igual al contrato. Rechaza campos extra (`forbidNonWhitelisted`). |
+| Autenticación | JWT de M1 con rol `SERVICIO` (en el contrato; el código aún no lo exige). | JWT de M1 (en el contrato; el código aún no lo exige). |
+| Eventos de M6 | **No escucha RabbitMQ**: espera que M6 haga `POST /api/v1/eventos` con su formato (`tipo: VIAJE_INICIADO`…, `destinatarios` obligatorio). | RabbitMQ, exchange `urban_mobility_events`, hoy sólo `trip.completed` (configurable por variables de entorno). |
 
-**Mensaje:**
+### Cómo lo resolvimos en M6 (rama `integracion-m8-qr`)
 
-> Hola, somos el Grupo 5 (M6 – Viajes). Necesitamos acordar con ustedes el QR de inicio del viaje
-> (RF-8.3 y RF-6.4):
+- `VALIDADOR_QR=m8` consulta **en paralelo** a los M8 de `M8_PROVEEDORES` (`g7,g10`). El QR lo
+  generó uno solo, así que a lo sumo uno lo reconoce y lo consume.
+  - Alguno lo acepta → se inicia el viaje.
+  - Alguno lo conoce y lo rechaza (`400`, `409`, `410`, `422`) → `422` al conductor.
+  - Ninguno lo reconoce y alguno no respondió en 2 s (o dio `5xx`, `401`, `403`) → `503`, el viaje
+    no cambia.
+  - Todos dicen `404` → `422`.
+- A cada M8 se le manda su propio formato (`viajeId` para G7, `tripId` para G10), el header
+  `Authorization` con el JWT de servicio (`M8_G7_TOKEN`, `M8_G10_TOKEN`), `Idempotency-Key`
+  (derivada del viaje y del QR, así un reintento devuelve la respuesta original) y `X-Request-Id`.
+- **Control propio:** si la respuesta trae el id de un viaje distinto, se rechaza aunque el M8 diga
+  que es válido.
+- La ruta se puede cambiar por variable (`M8_G7_RUTA_QR`), porque el código del G7 todavía no usa
+  la de su contrato.
+- `401`/`403` ya no se toman como "QR inválido" sino como error de configuración (`503` y log de
+  error).
+
+### Pendiente de acordar
+
+1. **G7:** alinear el código con su contrato (ruta y `viajeId` en el cuerpo) y verificar que el QR
+   pertenezca al viaje **antes** de consumirlo; hoy un QR de otro viaje se consume igual.
+2. **G7:** recibir nuestros eventos por RabbitMQ (exchange `movilidad.eventos`, routing keys
+   `trips.*.*`) en lugar de que M6 les haga `POST`. M6 no tiene emails ni teléfonos para armar
+   `destinatarios`; eso lo puede resolver M8 con M2/M3.
+3. **G10:** escuchar los cinco eventos de M6 (`trips.trip.created`, `trips.driver.arrived`,
+   `trips.trip.started`, `trips.trip.completed`, `trips.trip.cancelled`) y usar el exchange común
+   `movilidad.eventos` (o acordar un único nombre entre todos).
+4. **Ambos:** el QR dura 300 s (G10) o 600 s (G7); la app tiene que poder regenerarlo si vence
+   antes de que llegue el conductor. Lo genera la app del cliente, no un evento de M6.
+5. **Consorcio:** cómo obtiene M6 su JWT de servicio de M1.
+
+### Mensaje para el Grupo 7
+
+> Hola, somos el Grupo 5 (M6 – Viajes). Revisamos su repo para integrar el QR de inicio del viaje
+> (RF-8.3 y RF-6.4). Ya adaptamos M6 a su contrato: llamamos a `POST /api/v1/qr/validaciones` con
+> `{ "token", "viajeId" }`, `Idempotency-Key` y el JWT de servicio, y tomamos `200` como válido y
+> `404`/`409`/`422` como inválido. Si no responden en 2 s, M6 devuelve 503 y el viaje queda igual.
 >
-> **Generación:** ustedes escuchan nuestro evento `TripCreated` (`trips.trip.created`) y generan
-> el QR de un solo uso para ese `tripId`.
+> Encontramos dos cosas en el código actual:
+> 1. La validación está en `POST /api/Documentos/qr/validar` y recibe sólo `{ token }`. ¿La pueden
+>    pasar a la ruta y el cuerpo del contrato? Mientras tanto la configuramos por variable.
+> 2. No se verifica que el QR sea del viaje: un QR de otro viaje se consume y responde `200`.
+>    Sugerimos comparar el `viajeId` antes de consumirlo y responder `422` (como dice su contrato).
 >
-> **Validación:** cuando el conductor lo escanea, nosotros los llamamos a
-> `POST /qr/validaciones` con `{ "viajeId": "...", "codigo": "..." }` y esperamos
-> `{ "valido": true/false }`. En esa misma llamada ustedes lo marcan como usado. Si no responden
-> en 2 segundos, le devolvemos 503 al conductor y el viaje queda como estaba.
+> Sobre las notificaciones: nosotros publicamos los eventos en RabbitMQ (exchange
+> `movilidad.eventos`, tipo topic; routing keys `trips.trip.created`, `trips.driver.arrived`,
+> `trips.trip.started`, `trips.trip.completed`, `trips.trip.cancelled`; formato en nuestro
+> `docs/catalogo-eventos.md`). ¿Les sirve escucharlos ahí en lugar de que les hagamos `POST
+> /api/v1/eventos`? M6 no tiene los datos de contacto que pide `destinatarios`. Pueden llegar
+> repetidos: conviene ignorar los `eventId` ya procesados. ¡Gracias!
+
+### Mensaje para el Grupo 10
+
+> Hola, somos el Grupo 5 (M6 – Viajes). Revisamos su repo para integrar el QR de inicio del viaje
+> (RF-8.3 y RF-6.4). Ya adaptamos M6 a su contrato: llamamos a `POST /api/v1/documents/qr/verify`
+> con exactamente `{ "token", "tripId" }` y tomamos `200 { valid: true }` como válido y
+> `400`/`404`/`410` como inválido. Si no responden en 2 s, M6 devuelve 503 y el viaje queda igual.
+> Mandamos también `Authorization: Bearer <JWT de servicio>`, `Idempotency-Key` y `X-Request-Id`.
 >
-> También publicamos `DriverArrived`, `TripStarted`, `TripCompleted` y `TripCancelled`
-> para las notificaciones y el comprobante (los campos están en nuestro `docs/catalogo-eventos.md`).
-> Un evento puede llegar repetido: conviene ignorar los `eventId` ya procesados, para no
-> notificar dos veces.
+> Sobre las notificaciones: vimos que escuchan `trip.completed` en `urban_mobility_events`.
+> Nosotros publicamos en el exchange `movilidad.eventos` (topic) con las routing keys
+> `trips.trip.created`, `trips.driver.arrived`, `trips.trip.started`, `trips.trip.completed` y
+> `trips.trip.cancelled` (formato en nuestro `docs/catalogo-eventos.md`). ¿Pueden configurar
+> esos nombres y escuchar los cinco? Pueden llegar repetidos: conviene ignorar los `eventId` ya
+> procesados.
 >
-> Preguntas: ¿el QR es un código opaco o algo firmado? ¿Cuánto dura? ¿Les sirve ese endpoint o
-> ya tienen otro definido? ¡Gracias!
+> Una consulta: el QR dura 300 s. ¿La app puede pedir otro si vence antes de que llegue el
+> conductor? ¡Gracias!
 
 **Acordado:** _(completar)_
 
@@ -599,7 +635,7 @@ levantan los 9 módulos en conjunto.
 | Tema | Propuesta de M6 |
 |---|---|
 | Infraestructura | Un RabbitMQ compartido con el exchange `movilidad.eventos`. Cada módulo con **su propia** base de datos (RNF-05); puede ser un mismo servidor PostgreSQL con bases separadas. Redis compartido, con prefijos por módulo (M6 usa `m6:`). |
-| Cómo se encuentran | Cada módulo recibe las URLs de los otros por variables de entorno (M6: `M8_URL`, `RABBITMQ_URL`, etc.); nada fijo en el código (RNF-06). |
+| Cómo se encuentran | Cada módulo recibe las URLs de los otros por variables de entorno (M6: `M8_G7_URL`, `M8_G10_URL`, `RABBITMQ_URL`, etc.); nada fijo en el código (RNF-06). |
 | Puertos | Una tabla con un puerto por módulo, para no chocar: por ejemplo M1 → 3001, …, M6 → 3006, …, M9 → 3009. |
 | Credenciales | Secretos fuera del repositorio, en un `.env` compartido por fuera de Git (RNF-06). |
 | Imágenes | Cada grupo publica la suya con una versión fija. La de M6 es `ghcr.io/santileconte/m6-viajes:<versión>`. |
