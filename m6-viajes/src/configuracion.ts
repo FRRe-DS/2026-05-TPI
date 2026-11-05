@@ -1,3 +1,5 @@
+import { variantesConfiguradas } from './viajes/infraestructura/validador-codigo.m8';
+
 /**
  * Valida las variables de entorno al arrancar (RNF-06: la configuración vive fuera del código).
  * Si falta algo, el servicio no arranca y el mensaje dice qué corregir.
@@ -14,8 +16,18 @@ export function validarConfiguracion(env: Record<string, unknown>): Record<strin
   if (validador !== 'simulado' && validador !== 'm8') {
     errores.push('VALIDADOR_QR debe ser "simulado" o "m8"');
   }
-  if (validador === 'm8' && !env.M8_URL) {
-    errores.push('M8_URL es obligatoria cuando VALIDADOR_QR=m8');
+  if (validador === 'm8') {
+    const variantes = variantesConfiguradas(env.M8_PROVEEDORES as string | undefined);
+    if (variantes.length === 0) {
+      errores.push('M8_PROVEEDORES debe listar al menos un M8 ("g7", "g10" o "g7,g10")');
+    }
+    for (const variante of variantes) {
+      if (variante !== 'g7' && variante !== 'g10') {
+        errores.push(`M8_PROVEEDORES tiene un valor desconocido: "${variante}" (usar "g7" y/o "g10")`);
+      } else if (!env[`M8_${variante.toUpperCase()}_URL`]) {
+        errores.push(`M8_${variante.toUpperCase()}_URL es obligatoria cuando M8_PROVEEDORES incluye "${variante}"`);
+      }
+    }
   }
 
   const persistencia = env.PERSISTENCIA ?? 'memoria';

@@ -825,6 +825,31 @@ como en el Grupo 12.
 
 ---
 
+## Paso 18 – Integrar la validación del QR con los dos M8 (Grupos 7 y 10)
+
+Trabajado en la rama `integracion-m8-qr` para no interferir con `main`.
+
+**Qué se hizo:** se revisaron los repositorios de los dos grupos de M8 y se comparó su contrato
+con el nuestro (detalle y mensajes en `acuerdos-con-otros-grupos.md`, sección M8). Ninguno usaba
+el endpoint que habíamos propuesto, y cada uno define el suyo con nombres y códigos distintos.
+Como la app final tiene que funcionar con los dos, M6 se adaptó a ambos:
+
+- `validador-codigo.m8.ts` consulta en paralelo a los M8 configurados en `M8_PROVEEDORES`. Cada
+  QR existe en un solo M8, así que a lo sumo uno lo reconoce y lo consume.
+- Se manda a cada uno su formato (`viajeId` para G7, `tripId` para G10), con JWT de servicio,
+  `Idempotency-Key` estable (un reintento recibe la respuesta original) y `X-Request-Id`.
+- Variables nuevas: `M8_PROVEEDORES`, `M8_G7_URL`, `M8_G7_RUTA_QR`, `M8_G7_TOKEN` y las
+  equivalentes de G10. Reemplazan a `M8_URL`.
+- Tests unitarios nuevos en `validador-codigo.m8.spec.ts`.
+
+**Problemas encontrados en el cliente anterior:**
+1. Con el contrato del G7 (`200` sin campo `valido`) nunca se habría podido iniciar un viaje.
+2. No se mandaba `Authorization`: los dos M8 lo exigen en su contrato.
+3. Un `401`/`403` se tomaba como "QR inválido" y se le echaba la culpa al conductor. Ahora es 503
+   con un log de error.
+4. El código actual del G7 no verifica que el QR sea del viaje. M6 ahora compara el id del viaje
+   de la respuesta y rechaza si no coincide (se les avisó para que lo corrijan del lado de ellos).
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |
@@ -893,7 +918,7 @@ grupo-5-dds/
 
 ## Próximos pasos
 
-1. **Mandar los mensajes** de `docs/acuerdos-con-otros-grupos.md`, empezando por M5, M8, la
+1. **Mandar los mensajes** de `docs/acuerdos-con-otros-grupos.md`, empezando por M5, M8 (ya hay uno para cada grupo), la
    cátedra y el Grupo 12. Ir completando la tabla de seguimiento y ajustar contratos y código
    según lo que se acuerde.
 2. **TP2 – lo que queda:**
