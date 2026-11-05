@@ -51,7 +51,7 @@ Estos puntos se incorporaron a los mensajes porque cambian la forma en que otros
 | **Errores con `code`, `message` y `timestamp`** (además de los campos de RFC 9457) | Todos los que llaman a la API | Leer `code` (en inglés) para decidir |
 
 Los contratos completos están en el repositorio:
-- `contratos/m6-viajes.openapi.yaml`: la API.
+- `contratos/openapi.yaml`: la API.
 - `contratos/eventos/m6-viajes.asyncapi.yaml`: los eventos.
 - `docs/catalogo-eventos.md`: versión legible de los eventos.
 
@@ -173,7 +173,7 @@ cancela antes de iniciar, la solicitud debe **volver** a M5 para que busque otro
 > nuevo? ¿Prefieren avisarnos por evento en vez de llamar a
 > la API? ¿Quién marca al conductor como ocupado en M4?
 >
-> Les pasamos el contrato (`contratos/m6-viajes.openapi.yaml`). ¡Gracias!
+> Les pasamos el contrato (`contratos/openapi.yaml`). ¡Gracias!
 
 **Acordado:** _(completar)_
 
@@ -291,7 +291,7 @@ salvo los tres puntos de la parte 3, que conviene hablar.
 **Para mandarles:** `docs/unificacion-m6-grupo-12.md` cuenta todo esto escrito para ellos, con ejemplos.
 
 Los archivos de referencia de nuestro lado son:
-- `contratos/m6-viajes.openapi.yaml` (la API) y `contratos/eventos/m6-viajes.asyncapi.yaml` (los eventos);
+- `contratos/openapi.yaml` (la API) y `contratos/eventos/m6-viajes.asyncapi.yaml` (los eventos);
 - `docs/m6/maquina-de-estados.md` (estados, transiciones y reglas) y `docs/catalogo-eventos.md`.
 
 ### Parte 1 – Lo que cambiamos nosotros para parecernos a ustedes (ya hecho)

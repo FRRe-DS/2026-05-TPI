@@ -9,7 +9,7 @@ import { CancelarViajeDto, CrearViajeDto, FinalizarViajeDto, IniciarViajeDto, Li
 import { resumenAJson, transicionAJson, viajeAJson } from './presentacion';
 
 /**
- * Endpoints de contratos/m6-viajes.openapi.yaml.
+ * Endpoints de contratos/openapi.yaml.
  * El controlador sólo traduce HTTP ⇄ casos de uso; las reglas viven en el dominio y el servicio.
  */
 @Controller('trips')

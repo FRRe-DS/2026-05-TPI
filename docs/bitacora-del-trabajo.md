@@ -110,7 +110,7 @@ ASIGNADO → CONDUCTOR_ARRIBADO → EN_CURSO → FINALIZADO
 **Qué es:** un archivo que describe con precisión la API de M6: rutas, datos de entrada,
 respuestas y errores posibles. Funciona como el "acuerdo" con los otros grupos.
 
-Archivo: [`contratos/m6-viajes.openapi.yaml`](../contratos/m6-viajes.openapi.yaml)
+Archivo: [`contratos/openapi.yaml`](../contratos/openapi.yaml)
 
 | Endpoint | Quién lo usa | Para qué |
 |---|---|---|
@@ -526,7 +526,7 @@ latencia, adecuado para datos con vencimiento automático.
 |---|---|
 | `src/comun/idempotencia/` | Interceptor, interfaz del almacén e implementaciones en Redis y en memoria |
 | `docker-compose.yml` | Servicio `redis` |
-| `contratos/m6-viajes.openapi.yaml` | Códigos `PEDIDO_EN_CURSO` y `CLAVE_IDEMPOTENCIA_REUTILIZADA`, y cómo usar `Idempotency-Key` |
+| `contratos/openapi.yaml` | Códigos `PEDIDO_EN_CURSO` y `CLAVE_IDEMPOTENCIA_REUTILIZADA`, y cómo usar `Idempotency-Key` |
 | `.github/workflows/m6-viajes.yml` | Redis como servicio en el CI |
 | `docs/decisiones/ADR-004-idempotencia-redis.md` | La decisión y por qué se sigue procesando si Redis se cae |
 
@@ -852,7 +852,7 @@ grupo-5-dds/
 ├── .github/workflows/m6-viajes.yml   # CI: tests, contratos e imagen en cada push
 ├── README.md                         # cómo levantar y probar todo
 ├── contratos/
-│   ├── m6-viajes.openapi.yaml        # API de M6
+│   ├── openapi.yaml                   # API de M6
 │   └── eventos/m6-viajes.asyncapi.yaml
 ├── docs/
 │   ├── bitacora-del-trabajo.md       # este documento

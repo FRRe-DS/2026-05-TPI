@@ -4,7 +4,7 @@ import { INestApplication } from '@nestjs/common';
 import { OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { parse } from 'yaml';
 
-const CONTRATO_POR_DEFECTO = join(__dirname, '..', '..', '..', 'contratos', 'm6-viajes.openapi.yaml');
+const CONTRATO_POR_DEFECTO = join(__dirname, '..', '..', '..', 'contratos', 'openapi.yaml');
 
 /**
  * Publica en /docs una interfaz Swagger UI generada desde el contrato OpenAPI del repositorio

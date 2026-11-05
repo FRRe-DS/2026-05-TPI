@@ -14,7 +14,7 @@ finalización, la cancelación y la auditoría.
 | [`docs/bitacora-del-trabajo.md`](docs/bitacora-del-trabajo.md) | Registro paso a paso del trabajo realizado y de los problemas encontrados al probar. |
 | [`docs/acuerdos-con-otros-grupos.md`](docs/acuerdos-con-otros-grupos.md) | Propuestas de integración y mensajes preparados para cada grupo, con su seguimiento. |
 | [`docs/m6/maquina-de-estados.md`](docs/m6/maquina-de-estados.md) | Estados, transiciones, reglas de negocio y temas pending de acordar con otros grupos. |
-| [`contratos/m6-viajes.openapi.yaml`](contratos/m6-viajes.openapi.yaml) | Contrato de la API síncrona (OpenAPI 3.1). |
+| [`contratos/openapi.yaml`](contratos/openapi.yaml) | Contrato de la API síncrona (OpenAPI 3.1). |
 | [`contratos/eventos/m6-viajes.asyncapi.yaml`](contratos/eventos/m6-viajes.asyncapi.yaml) | Eventos que publica M6 (AsyncAPI 3.0). |
 | [`docs/catalogo-eventos.md`](docs/catalogo-eventos.md) | Versión legible del catálogo de eventos y convenciones propuestas al consorcio. |
 | [`docs/decisiones/`](docs/decisiones) | Registros de decisiones de arquitectura (ADR). |

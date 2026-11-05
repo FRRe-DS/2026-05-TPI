@@ -20,7 +20,7 @@ Todo lo que mencionamos está en nuestro repositorio,
 
 | Archivo | Qué tiene |
 |---|---|
-| `contratos/m6-viajes.openapi.yaml` | La API completa (OpenAPI 3.1) |
+| `contratos/openapi.yaml` | La API completa (OpenAPI 3.1) |
 | `contratos/eventos/m6-viajes.asyncapi.yaml` | Los eventos (AsyncAPI 3.0) |
 | `docs/m6/maquina-de-estados.md` | Estados, transiciones, quién puede ejecutar cada una y reglas |
 | `docs/catalogo-eventos.md` | Versión legible de los eventos, con ejemplos |

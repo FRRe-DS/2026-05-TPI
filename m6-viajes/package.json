@@ -9,7 +9,7 @@
     "test": "jest && jest --config test/jest-e2e.json",
     "test:cov": "jest --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
-    "contratos:validar": "redocly lint --config ../redocly.yaml ../contratos/m6-viajes.openapi.yaml && node scripts/validar-asyncapi.js ../contratos/eventos/m6-viajes.asyncapi.yaml",
+    "contratos:validar": "redocly lint --config ../redocly.yaml ../contratos/openapi.yaml && node scripts/validar-asyncapi.js ../contratos/eventos/m6-viajes.asyncapi.yaml",
     "token": "node scripts/generar-token.js",
     "test:e2e": "jest --config test/jest-e2e.json",
     "test:infra": "TEST_PERSISTENCIA=postgres TEST_RABBITMQ_URL=${TEST_RABBITMQ_URL:-amqp://m6:m6@localhost:5672} TEST_REDIS_URL=${TEST_REDIS_URL:-redis://localhost:6379} jest --config test/jest-e2e.json --runInBand",
@@ -71,6 +71,9 @@
     "testEnvironment": "node"
   },
   "overrides": {
+    "body-parser": "2.4.0",
+    "multer": "2.5.0",
+    "qs": "6.16.1",
     "@nestjs/swagger": {
       "js-yaml": "5.4.3"
     }

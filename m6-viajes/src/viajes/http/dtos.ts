@@ -17,7 +17,7 @@ import {
 import { EstadoViaje, MotivoCancelacion, TipoVehiculo } from '../dominio/tipos';
 
 // Los DTOs describen lo que llega por HTTP y se validan automáticamente (ver comun/validacion.pipe.ts).
-// Deben coincidir con los schemas de contratos/m6-viajes.openapi.yaml.
+// Deben coincidir con los schemas de contratos/openapi.yaml.
 
 export class CrearViajeDto {
   @IsUUID()

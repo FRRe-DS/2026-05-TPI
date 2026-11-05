@@ -32,7 +32,7 @@ COPY --from=compilacion --chown=node:node /app/m6-viajes/node_modules ./node_mod
 COPY --from=compilacion --chown=node:node /app/m6-viajes/dist ./dist
 COPY --chown=node:node m6-viajes/package.json ./
 COPY --chown=node:node m6-viajes/migraciones ./migraciones
-COPY --chown=node:node contratos/m6-viajes.openapi.yaml /app/contratos/m6-viajes.openapi.yaml
+COPY --chown=node:node contratos/openapi.yaml /app/contratos/openapi.yaml
 
 # No correr como root dentro del contenedor.
 USER node

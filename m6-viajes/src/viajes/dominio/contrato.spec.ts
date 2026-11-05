@@ -5,7 +5,7 @@ import { AccionViaje, EstadoViaje, MotivoCancelacion, Rol, TipoVehiculo } from '
 
 // Si alguien cambia un enum en el código o en el contrato, este test avisa que hay que cambiar el otro.
 const CONTRATOS = join(__dirname, '../../../../contratos');
-const openapi = parse(readFileSync(join(CONTRATOS, 'm6-viajes.openapi.yaml'), 'utf8'));
+const openapi = parse(readFileSync(join(CONTRATOS, 'openapi.yaml'), 'utf8'));
 const asyncapi = parse(readFileSync(join(CONTRATOS, 'eventos/m6-viajes.asyncapi.yaml'), 'utf8'));
 
 const enumOpenapi = (nombre: string): string[] => openapi.components.schemas[nombre].enum;
