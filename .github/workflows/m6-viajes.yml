@@ -124,7 +124,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           docker build -f m6-viajes/Dockerfile -t m6-viajes:ci .
 
-      - name: Probar que la imagen arranca y responde /salud
+      - name: Probar que la imagen arranca y responde /health
         working-directory: .
         run: |
           docker run -d --name m6 -p 3000:3000 \
@@ -132,10 +132,10 @@ jobs:
             -e PERSISTENCIA=memoria -e PUBLICADOR_EVENTOS=log \
             m6-viajes:ci
           for i in $(seq 1 30); do
-            if curl -fs http://localhost:3000/salud; then echo; echo "La imagen responde"; exit 0; fi
+            if curl -fs http://localhost:3000/health; then echo; echo "La imagen responde"; exit 0; fi
             sleep 1
           done
-          echo "La imagen no respondió en /salud"; docker logs m6; exit 1
+          echo "La imagen no respondió en /health"; docker logs m6; exit 1
 
       - name: Publicar en GitHub Container Registry (sólo en main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
