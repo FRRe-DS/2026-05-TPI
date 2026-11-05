@@ -34,8 +34,10 @@ function validador(variantes: ('g7' | 'g10')[] = ['g7', 'g10'], extra: Record<st
 }
 
 describe('ValidadorCodigoM8 (Grupos 7 y 10)', () => {
-  beforeAll(() => jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined));
-  beforeAll(() => jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined));
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
   afterEach(() => jest.restoreAllMocks());
 
   it('manda a cada M8 su ruta y su formato de cuerpo', async () => {
