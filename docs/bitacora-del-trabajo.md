@@ -850,6 +850,30 @@ Como la app final tiene que funcionar con los dos, M6 se adaptó a ambos:
 4. El código actual del G7 no verifica que el QR sea del viaje. M6 ahora compara el id del viaje
    de la respuesta y rechaza si no coincide (se les avisó para que lo corrijan del lado de ellos).
 
+## Paso 19 – Prueba real de M6 con los dos M8
+
+**Qué se hizo:** se armó `demo/integracion-m8/`, un laboratorio con Docker que levanta M6 y los
+M8 de los grupos 7 y 10 desde sus repos, y un script (`node demo.mjs`) que recorre el inicio de
+viaje con un QR real y muestra cada pedido y respuesta.
+
+**Resultado:** M6, 5 de 5 verificaciones correctas: inicio con QR del G7 y del G10, rechazo de un
+código falso, de un QR reusado y de un QR de otro viaje.
+
+**Problemas encontrados en los otros grupos** (detalle y mensajes en `acuerdos-con-otros-grupos.md`):
+1. G7: generar el QR responde siempre `500` (atributo de validación mal ubicado en un `record`).
+   Para probar igual su validación, la demo guarda el QR en su Redis con el mismo formato que usa
+   su código.
+2. G7: el QR dura minutos en lugar de segundos.
+3. G7: su validación aceptó un QR de otro viaje. El control propio de M6 lo frenó, como se
+   esperaba.
+4. G10: su imagen Docker no arranca tal como está (OpenSSL, permisos y migraciones de Prisma). El
+   laboratorio lo corrige al iniciar.
+
+**Problemas propios al armar el laboratorio:** los tres sistemas usan los mismos puertos (5432,
+5672, 6379), así que el laboratorio expone sólo las APIs. La imagen `rabbitmq:3-management-alpine`
+que usa el G10 no arrancó en Docker Desktop (error al leer la cookie de Erlang); con la
+`3.13-management-alpine` funciona.
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |

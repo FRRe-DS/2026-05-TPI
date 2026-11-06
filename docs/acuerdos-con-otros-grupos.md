@@ -217,19 +217,39 @@ las dos. Revisamos sus repositorios (G7: commit del 24/10; G10: commit del 22/10
 - `401`/`403` ya no se toman como "QR inválido" sino como error de configuración (`503` y log de
   error).
 
+### Prueba real con los dos M8 (5/11)
+
+Se levantaron los tres servicios desde sus repos con `demo/integracion-m8/` y se recorrió el
+inicio de viaje con QR real. **M6: 5 de 5 verificaciones correctas** (inicio con QR de G7 y de G10,
+código falso, QR reusado y QR de otro viaje). Problemas encontrados en los otros grupos:
+
+- **G7 – generar el QR responde siempre `500`.** El atributo `[property: Range(30, 3600)]` sobre
+  el parámetro `ValidezSegundos` del `record GenerarQrRequest` hace que ASP.NET rechace el pedido
+  (`InvalidOperationException: ... validation metadata must be associated with the constructor
+  parameter`). Se arregla cambiándolo por `[Range(30, 3600)]`.
+- **G7 – el QR dura minutos en vez de segundos:** `TimeSpan.FromMinutes(validezSegundos)` debería
+  ser `FromSeconds`. Con el valor por defecto (600), el QR dura 10 horas.
+- **G7 – confirmado en la prueba:** su validación aceptó un QR de otro viaje. M6 lo frenó con su
+  control propio.
+- **G10 – su imagen Docker no arranca tal como está:** a `node:20-alpine` le falta OpenSSL para
+  Prisma, corre con `USER node` sin permiso para preparar Prisma, y no aplica las migraciones
+  (`prisma migrate deploy`) antes de iniciar. Con eso corregido, todo su flujo de QR anduvo bien.
+
 ### Pendiente de acordar
 
-1. **G7:** alinear el código con su contrato (ruta y `viajeId` en el cuerpo) y verificar que el QR
+1. **G7:** arreglar la generación del QR (`500`) y la duración (minutos → segundos).
+2. **G7:** alinear el código con su contrato (ruta y `viajeId` en el cuerpo) y verificar que el QR
    pertenezca al viaje **antes** de consumirlo; hoy un QR de otro viaje se consume igual.
-2. **G7:** recibir nuestros eventos por RabbitMQ (exchange `movilidad.eventos`, routing keys
+3. **G10:** que su imagen Docker arranque sola (OpenSSL, permisos, migraciones).
+4. **G7:** recibir nuestros eventos por RabbitMQ (exchange `movilidad.eventos`, routing keys
    `trips.*.*`) en lugar de que M6 les haga `POST`. M6 no tiene emails ni teléfonos para armar
    `destinatarios`; eso lo puede resolver M8 con M2/M3.
-3. **G10:** escuchar los cinco eventos de M6 (`trips.trip.created`, `trips.driver.arrived`,
+5. **G10:** escuchar los cinco eventos de M6 (`trips.trip.created`, `trips.driver.arrived`,
    `trips.trip.started`, `trips.trip.completed`, `trips.trip.cancelled`) y usar el exchange común
    `movilidad.eventos` (o acordar un único nombre entre todos).
-4. **Ambos:** el QR dura 300 s (G10) o 600 s (G7); la app tiene que poder regenerarlo si vence
+6. **Ambos:** el QR dura 300 s (G10) o 600 s (G7); la app tiene que poder regenerarlo si vence
    antes de que llegue el conductor. Lo genera la app del cliente, no un evento de M6.
-5. **Consorcio:** cómo obtiene M6 su JWT de servicio de M1.
+7. **Consorcio:** cómo obtiene M6 su JWT de servicio de M1.
 
 ### Mensaje para el Grupo 7
 
@@ -238,11 +258,20 @@ las dos. Revisamos sus repositorios (G7: commit del 24/10; G10: commit del 22/10
 > `{ "token", "viajeId" }`, `Idempotency-Key` y el JWT de servicio, y tomamos `200` como válido y
 > `404`/`409`/`422` como inválido. Si no responden en 2 s, M6 devuelve 503 y el viaje queda igual.
 >
-> Encontramos dos cosas en el código actual:
-> 1. La validación está en `POST /api/Documentos/qr/validar` y recibe sólo `{ token }`. ¿La pueden
+> Levantamos su M8 desde el repo y lo probamos junto con M6. Encontramos estas cosas:
+> 1. **Generar el QR responde siempre `500`**: el `[property: Range(30, 3600)]` en
+>    `GenerarQrRequest` hace fallar la validación de ASP.NET con los `record`. Se arregla con
+>    `[Range(30, 3600)]`.
+> 2. En `QrService.GenerarAsync`, `TimeSpan.FromMinutes(validezSegundos)` debería ser
+>    `FromSeconds`: hoy un QR de 600 "segundos" dura 10 horas.
+> 3. La validación está en `POST /api/Documentos/qr/validar` y recibe sólo `{ token }`. ¿La pueden
 >    pasar a la ruta y el cuerpo del contrato? Mientras tanto la configuramos por variable.
-> 2. No se verifica que el QR sea del viaje: un QR de otro viaje se consume y responde `200`.
->    Sugerimos comparar el `viajeId` antes de consumirlo y responder `422` (como dice su contrato).
+> 4. No se verifica que el QR sea del viaje: lo comprobamos en la prueba, un QR de otro viaje se
+>    consume y responde `200`. Sugerimos comparar el `viajeId` antes de consumirlo y responder
+>    `422` (como dice su contrato).
+>
+> La validación en sí anduvo bien con M6. Si quieren reproducirlo, el laboratorio está en nuestro
+> repo, en `demo/integracion-m8/`.
 >
 > Sobre las notificaciones: nosotros publicamos los eventos en RabbitMQ (exchange
 > `movilidad.eventos`, tipo topic; routing keys `trips.trip.created`, `trips.driver.arrived`,
@@ -258,6 +287,12 @@ las dos. Revisamos sus repositorios (G7: commit del 24/10; G10: commit del 22/10
 > con exactamente `{ "token", "tripId" }` y tomamos `200 { valid: true }` como válido y
 > `400`/`404`/`410` como inválido. Si no responden en 2 s, M6 devuelve 503 y el viaje queda igual.
 > Mandamos también `Authorization: Bearer <JWT de servicio>`, `Idempotency-Key` y `X-Request-Id`.
+>
+> Levantamos su M8 desde el repo y lo probamos junto con M6: generar, validar y rechazar un QR
+> reusado anduvo perfecto. Lo único que falló fue su imagen Docker tal como está, que no arranca:
+> a `node:20-alpine` le falta OpenSSL para Prisma (`apk add openssl`), el `USER node` no tiene
+> permiso para preparar Prisma, y no se corre `prisma migrate deploy` antes de iniciar. El
+> laboratorio está en nuestro repo, en `demo/integracion-m8/`, por si les sirve.
 >
 > Sobre las notificaciones: vimos que escuchan `trip.completed` en `urban_mobility_events`.
 > Nosotros publicamos en el exchange `movilidad.eventos` (topic) con las routing keys

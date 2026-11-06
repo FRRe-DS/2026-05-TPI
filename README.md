@@ -19,6 +19,7 @@ finalización, la cancelación y la auditoría.
 | [`docs/catalogo-eventos.md`](docs/catalogo-eventos.md) | Versión legible del catálogo de eventos y convenciones propuestas al consorcio. |
 | [`docs/decisiones/`](docs/decisiones) | Registros de decisiones de arquitectura (ADR). |
 | [`m6-viajes/`](m6-viajes) | Servicio en TypeScript y NestJS. |
+| [`demo/integracion-m8/`](demo/integracion-m8) | Laboratorio y demo: M6 con los M8 de los grupos 7 y 10, inicio de viaje con QR real. |
 | [`.github/workflows/m6-viajes.yml`](.github/workflows/m6-viajes.yml) | CI: tipos, tests, contratos e imagen Docker en cada push. |
 
 ## Servicio `m6-viajes`
