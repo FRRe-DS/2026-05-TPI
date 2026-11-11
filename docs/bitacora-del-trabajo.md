@@ -946,6 +946,11 @@ de pagos y cargos todavía no. El código del Grupo 11 usa otras rutas.
 (AsyncAPI), la validación del QR con M8 ni la base de datos. Con el valor por defecto todo
 funciona como antes.
 
+**Limitaciones de hacerlo simple** (sin reintentos ni cola):
+- Si M7 falla al completar, esa tarifa final no se vuelve a mandar sola: hay que registrarla a mano
+  en M7 (repetir `complete` no vuelve a llamar).
+- `complete` puede tardar hasta `M7_TIMEOUT_MS` (2 s por defecto) más si M7 no responde.
+
 **Qué quedó pendiente** (detalle y mensaje en los acuerdos, sección M7): el pago, porque nadie le
 pasa a M6 el medio de pago, y el cargo de cancelación, porque falta definir cuándo corresponde.
 Tampoco están en Keycloak los scopes `tarifas:write` y `pagos:write`.
@@ -955,7 +960,8 @@ Tampoco están en Keycloak los scopes `tarifas:write` y `pagos:write`.
   `registrador-tarifa.m7.spec.ts`) y 63 de integración en memoria, en verde.
 - Prueba real contra el M7 del Grupo 6 (corrido con Python, SQLite y `AUTH_DISABLED=true`): se
   crearon reglas para auto y moto, se recorrió un viaje en M6 hasta `complete`, y M7 respondió
-  `201` y devolvió la tarifa final con la regla de moto (4,2 km × 300 + base 500 = 1760,5).
+  `201` y devolvió la tarifa final con la regla de moto: base 500 + 4,2 km × 300 + 0,01 min × 50
+  = 1760,5 (el viaje de prueba duró menos de un segundo).
 - Con M7 apagado, `complete` respondió `200` igual y quedó el error en el log.
 
 ## Problemas que aparecieron al probar y cómo se resolvieron

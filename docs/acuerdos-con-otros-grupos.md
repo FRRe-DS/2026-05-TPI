@@ -677,6 +677,8 @@ Lo que falta resolver con M7:
 
 ### Propuesta original (antes del contrato común)
 
+> **Reemplazada:** no mandar el mensaje de abajo; usar el de "Estado actual". Se deja como registro.
+
 **Qué necesitamos:** M7 cobra cuando el viaje termina y decide si corresponde un cargo cuando se
 cancela. M6 **no calcula importes**: sólo publica los datos.
 
