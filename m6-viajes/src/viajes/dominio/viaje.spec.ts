@@ -29,7 +29,7 @@ const DATOS: DatosNuevoViaje = {
   clientId: CLIENT.id,
   driverId: DRIVER.id,
   vehicleId: 'vehiculo-1',
-  vehicleType: TipoVehiculo.CAR,
+  vehicleType: TipoVehiculo.AUTO,
   originLatitude: -34.6037,
   originLongitude: -58.3816,
   originAddress: 'Av. Corrientes 1000',

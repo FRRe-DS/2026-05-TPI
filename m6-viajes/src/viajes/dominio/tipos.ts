@@ -25,8 +25,8 @@ export enum Rol {
 }
 
 export enum TipoVehiculo {
-  CAR = 'CAR',
-  MOTORCYCLE = 'MOTORCYCLE',
+  AUTO = 'AUTO',
+  MOTO = 'MOTO',
 }
 
 export enum MotivoCancelacion {

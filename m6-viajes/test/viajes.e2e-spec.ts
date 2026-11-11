@@ -138,7 +138,7 @@ describe('API de viajes (integración)', () => {
         expect.objectContaining({
           eventType: 'TripCreated',
           producer: 'm6-viajes',
-          payload: expect.objectContaining({ requestId: cuerpo.requestId, vehicleType: 'CAR', tripVersion: 1 }),
+          payload: expect.objectContaining({ requestId: cuerpo.requestId, vehicleType: 'AUTO', tripVersion: 1 }),
         }),
       ]);
     });

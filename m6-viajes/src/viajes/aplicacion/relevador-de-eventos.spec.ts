@@ -36,7 +36,7 @@ describe('RelevadorDeEventos', () => {
         clientId: 'cliente-1',
         driverId: conductor.id,
         vehicleId: 'v',
-        vehicleType: TipoVehiculo.CAR,
+        vehicleType: TipoVehiculo.AUTO,
         originLatitude: 0,
         originLongitude: 0,
         destinationLatitude: 0,
