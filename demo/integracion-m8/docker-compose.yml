@@ -99,6 +99,12 @@ services:
     # un usuario sin permiso para preparar Prisma y no aplica las migraciones. Acá se corrige al
     # iniciar, sin tocar su repositorio.
     user: root
+    # Su healthcheck da 10 s de arranque; con los pasos de abajo tarda más y `--wait` lo daría por caído.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/v1/health || exit 1"]
+      interval: 5s
+      start_period: 120s
+      retries: 3
     command: >-
       sh -c "apk add --no-cache openssl >/dev/null &&
              npx prisma generate --schema apps/backend/prisma/schema.prisma >/dev/null &&

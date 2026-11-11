@@ -874,6 +874,39 @@ código falso, de un QR reusado y de un QR de otro viaje.
 que usa el G10 no arrancó en Docker Desktop (error al leer la cookie de Erlang); con la
 `3.13-management-alpine` funciona.
 
+## Paso 20 – Adoptar los cambios del Grupo 12 al contrato compartido (AUTO/MOTO y alias de roles)
+
+Trabajado en la rama `contrato-g12-auto-moto`, creada a partir de `integracion-m8-qr` porque esa
+rama tiene el arreglo del CI.
+
+**Qué cambió el Grupo 12** (revisado en su repo, rama `m6/base-de-datos`, 9/11):
+1. `vehicleType` pasa de `CAR`/`MOTORCYCLE` a `AUTO`/`MOTO`, para coincidir con M2, M3, M4, M8 y M9.
+2. El token puede traer el rol en `role` o en la lista `roles`, con los nombres canónicos o sus
+   alias en castellano (`CLIENTE`, `CONDUCTOR`, `OPERADOR`, `SERVICIO` / `SERVICE`), y el id en
+   `sub` o en `identidad_id`.
+
+Los estados del viaje **no** cambiaron en ninguna de sus ramas.
+
+**Qué se hizo en M6:**
+- `contratos/openapi.yaml` quedó idéntico al del Grupo 12. El AsyncAPI y los ejemplos pasaron a
+  `AUTO`/`MOTO`.
+- Migración `005_tipo_vehiculo_auto_moto.sql`: renombra los valores guardados sin perder datos.
+  Igual que la 003, no corre si quedan eventos sin publicar.
+- `autenticacion.guard.ts` acepta los alias y la lista `roles`, con el mismo criterio que el
+  Grupo 12: primero `role` y, si no sirve, el primer rol válido de `roles`.
+- Tests: 8 nuevos de roles en `seguridad.e2e-spec.ts`; los demás pasan a usar `AUTO`/`MOTO`.
+- Docs: acuerdos (M5, M1 y la guía de unificación) actualizados. A M5 le simplifica: el Grupo 13
+  ya usaba `AUTO`/`MOTO` y el Grupo 4 ya no tiene que convertirlos.
+
+**Cómo se probó:** tipos OK; 74 tests unitarios; 79 de integración en memoria y 79 contra
+PostgreSQL, RabbitMQ y Redis reales. La migración convirtió los 5 viajes `MOTORCYCLE` que había
+en la base de tests a `MOTO`. La demo con los dos M8 sigue dando 5 de 5 para M6. Los contratos
+validan (redocly y AsyncAPI).
+
+**Problema al probar:** en el laboratorio, `docker compose up --wait` daba por caído al M8 del G10
+porque su healthcheck espera sólo 10 s y el arranque (OpenSSL + Prisma) tarda más. Se le dio más
+margen en `demo/integracion-m8/docker-compose.yml`.
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |

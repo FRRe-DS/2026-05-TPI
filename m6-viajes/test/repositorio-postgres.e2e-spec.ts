@@ -34,7 +34,7 @@ describeConPostgres('RepositorioViajesPostgres', () => {
         clientId: randomUUID(),
         driverId: randomUUID(),
         vehicleId: randomUUID(),
-        vehicleType: TipoVehiculo.MOTORCYCLE,
+        vehicleType: TipoVehiculo.MOTO,
         originLatitude: -34.6,
         originLongitude: -58.38,
         originAddress: 'Origen 123',

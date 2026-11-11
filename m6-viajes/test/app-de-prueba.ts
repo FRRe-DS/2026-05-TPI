@@ -67,7 +67,7 @@ export function nuevosIds() {
 export function cuerpoCrearViaje(ids = nuevosIds()) {
   return {
     ...ids,
-    vehicleType: 'CAR',
+    vehicleType: 'AUTO',
     originLatitude: -34.6037,
     originLongitude: -58.3816,
     originAddress: 'Av. Corrientes 1000',

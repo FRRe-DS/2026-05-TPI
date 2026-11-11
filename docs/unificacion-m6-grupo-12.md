@@ -138,7 +138,7 @@ Agregar a `CreateTripRequest`:
 
 | Campo | Tipo | Obligatorio | Para qué |
 |---|---|---|---|
-| `vehicleType` | `CAR` o `MOTORCYCLE` | Sí | M7 lo necesita para la tarifa |
+| `vehicleType` | `AUTO` o `MOTO` (hasta el 11/11: `CAR` o `MOTORCYCLE`) | Sí | M7 lo necesita para la tarifa |
 | `reservationId` | `uuid` o `null` | No | Viajes que vienen de una reserva (M9) |
 | `originAddress` | texto, hasta 300 | No | Mostrar la dirección en el historial |
 | `destinationAddress` | texto, hasta 300 | No | Ídem |
@@ -153,7 +153,7 @@ error es `REQUEST_ID_CONFLICT`.
   "clientId": "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
   "driverId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
   "vehicleId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e",
-  "vehicleType": "CAR",
+  "vehicleType": "AUTO",
   "originLatitude": -34.6037,
   "originLongitude": -58.3816,
   "destinationLatitude": -34.5889,
@@ -184,7 +184,7 @@ error es `REQUEST_ID_CONFLICT`.
   "clientId": "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
   "driverId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
   "vehicleId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e",
-  "vehicleType": "CAR",
+  "vehicleType": "AUTO",
   "originLatitude": -34.6037,
   "originLongitude": -58.3816,
   "destinationLatitude": -34.5889,
@@ -289,7 +289,7 @@ Ejemplo de `TripCompleted`:
     "reservationId": null,
     "clientId": "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
     "driverId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
-    "vehicleType": "CAR",
+    "vehicleType": "AUTO",
     "startedAt": "2026-10-08T12:07:00.000Z",
     "completedAt": "2026-10-08T12:22:00.000Z",
     "distanceKm": 4.2,

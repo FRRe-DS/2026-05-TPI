@@ -23,7 +23,7 @@ function nuevoViaje() {
       clientId: randomUUID(),
       driverId: randomUUID(),
       vehicleId: randomUUID(),
-      vehicleType: TipoVehiculo.CAR,
+      vehicleType: TipoVehiculo.AUTO,
       originLatitude: -34.6,
       originLongitude: -58.38,
       destinationLatitude: -34.58,

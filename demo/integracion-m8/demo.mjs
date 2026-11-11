@@ -87,7 +87,7 @@ async function crearViajeConConductorArribado() {
     token: M5,
     cuerpo: {
       ...ids,
-      vehicleType: 'CAR',
+      vehicleType: 'AUTO',
       originLatitude: -27.4512, originLongitude: -58.9867, originAddress: 'Av. 9 de Julio 1000, Resistencia',
       destinationLatitude: -27.4692, destinationLongitude: -58.8306, destinationAddress: 'Av. 3 de Abril 500, Corrientes',
     },

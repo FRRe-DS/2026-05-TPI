@@ -176,7 +176,7 @@ components:
               clientId: 3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
               driverId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
               vehicleId: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e
-              vehicleType: CAR
+              vehicleType: AUTO
               createdAt: '2026-10-08T12:00:00Z'
 
     DriverArrived:
@@ -256,7 +256,7 @@ components:
               reservationId: null
               clientId: 3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
               driverId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
-              vehicleType: CAR
+              vehicleType: AUTO
               startedAt: '2026-10-08T12:07:00Z'
               completedAt: '2026-10-08T12:22:00Z'
               distanceKm: 4.2
@@ -301,7 +301,7 @@ components:
               reservationId: null
               clientId: 3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
               driverId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
-              vehicleType: CAR
+              vehicleType: AUTO
               cancelledBy: DRIVER
               reason: VEHICLE_PROBLEM
               previousState: PENDING_ARRIVAL
@@ -348,7 +348,7 @@ components:
 
     VehicleType:
       type: string
-      enum: [CAR, MOTORCYCLE]
+      enum: [AUTO, MOTO]
 
     TripState:
       type: string

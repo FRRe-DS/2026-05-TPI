@@ -52,6 +52,33 @@ describe('Seguridad web (RNF-12)', () => {
     expect(res.body.detail).toContain('vencimiento');
   });
 
+  describe('roles con los nombres que puede emitir M1 (como el contrato del Grupo 12)', () => {
+    const firmar = (claims: Record<string, unknown>) =>
+      `Bearer ${new JwtService({ secret: SECRETO_TESTS }).sign(claims, { expiresIn: '1h' })}`;
+    const crearCon = (token: string) => http.post('/trips').set('Authorization', token).send(cuerpoCrearViaje());
+
+    it.each([
+      ['role: "SERVICIO"', { sub: 'm5', role: 'SERVICIO' }],
+      ['role: "SERVICE"', { sub: 'm5', role: 'SERVICE' }],
+      ['role en minúsculas', { sub: 'm5', role: 'system' }],
+      ['roles: ["SERVICIO"]', { sub: 'm5', roles: ['SERVICIO'] }],
+      ['roles con uno desconocido primero', { sub: 'm5', roles: ['ADMINISTRADOR', 'SERVICIO'] }],
+      ['identidad_id en lugar de sub', { identidad_id: 'm5', role: 'SYSTEM' }],
+    ])('acepta un token de servicio con %s', async (_, claims) => {
+      await crearCon(firmar(claims)).expect(201);
+    });
+
+    it('CONDUCTOR equivale a DRIVER: no puede crear viajes (403)', async () => {
+      await crearCon(firmar({ sub: randomUUID(), roles: ['CONDUCTOR'] })).expect(403);
+    });
+
+    it('rechaza un rol desconocido o la falta de rol (401)', async () => {
+      await crearCon(firmar({ sub: 'x', role: 'ADMINISTRADOR' })).expect(401);
+      await crearCon(firmar({ sub: 'x', roles: [] })).expect(401);
+      await crearCon(firmar({ role: 'SYSTEM' })).expect(401);
+    });
+  });
+
   it('rechaza un token vencido', async () => {
     const vencido = new JwtService({ secret: SECRETO_TESTS }).sign(
       { sub: 'm5', role: 'SYSTEM', exp: Math.floor(Date.now() / 1000) - 3600 },

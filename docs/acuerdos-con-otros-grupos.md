@@ -20,7 +20,7 @@ Cuando se cierra un acuerdo:
 
 | Módulo | Grupos | Tema principal | Prioridad | Estado |
 |---|---|---|---|---|
-| M5 Despacho | 4 y 13 | Cómo se crea el viaje y cómo vuelve una solicitud al despacho | Alta | Sin enviar |
+| M5 Despacho | 4 y 13 | Cómo se crea el viaje y cómo vuelve una solicitud al despacho | Alta | Repos revisados; mensajes listos para enviar (ninguno implementó todavía la llamada a M6) |
 | M8 Notificaciones | 7 y 10 | Generación y validación del QR, eventos | Alta | Repos revisados; M6 adaptado a ambos; mensajes listos para enviar |
 | Cátedra | — | Quién hace M1, formato del token y aprobación del stack (RNF-01) | Alta | Sin enviar |
 | M6 (otra impl.) | 12 | Unificar el contrato de M6 (guía paso a paso de qué cambia cada uno) | Alta | Sin enviar |
@@ -116,7 +116,7 @@ cancela antes de iniciar, la solicitud debe **volver** a M5 para que busque otro
      "clientId": "uuid",
      "driverId": "uuid",
      "vehicleId": "uuid",
-     "vehicleType": "CAR | MOTORCYCLE",
+     "vehicleType": "AUTO | MOTO",
      "originLatitude": -34.60,
      "originLongitude": -58.38,
      "destinationLatitude": -34.58,
@@ -157,7 +157,7 @@ cancela antes de iniciar, la solicitud debe **volver** a M5 para que busque otro
 >
 > **1) Creación del viaje:** cuando confirman la asignación de un conductor, nos llaman a
 > `POST /trips` (con token de servicio) con `requestId, reservationId (o null),
-> clientId, driverId, vehicleId, vehicleType (CAR|MOTORCYCLE), originLatitude/originLongitude y destinationLatitude/destinationLongitude (campos sueltos, tipo double)`. Respondemos
+> clientId, driverId, vehicleId, vehicleType (AUTO|MOTO), originLatitude/originLongitude y destinationLatitude/destinationLongitude (campos sueltos, tipo double)`. Respondemos
 > 201 con el viaje, o 200 si ya existía para ese `requestId` con los mismos datos (así pueden
 > reintentar sin duplicar), o 409 si el `requestId` existe con datos distintos.
 >
@@ -174,6 +174,73 @@ cancela antes de iniciar, la solicitud debe **volver** a M5 para que busque otro
 > la API? ¿Quién marca al conductor como ocupado en M4?
 >
 > Les pasamos el contrato (`contratos/openapi.yaml`). ¡Gracias!
+
+### Lo que hizo cada grupo (repos revisados el 11/11)
+
+| | Grupo 4 (Node + Prisma) | Grupo 13 (Python FastAPI + MySQL) |
+|---|---|---|
+| Documentación | Su `docs/openapi-a.yml` **ya adopta nuestro contrato**: `POST /trips`, `solicitud_id` como `requestId`, nuestros estados. Convertía `AUTO`/`MOTO` a `CAR`/`MOTORCYCLE`; desde el 11/11 M6 usa `AUTO`/`MOTO` y la conversión sobra. | `Contratos/integracion_m6.yml`: propuesta propia "pendiente de confirmación con M6", **no implementada**. |
+| Ruta y cuerpo | El código (`notificaciones.js`) manda `{ solicitudId, conductorId, ofertaId }` a una ruta todavía sin definir. **Faltan** `clientId`, `vehicleId`, `vehicleType` y las coordenadas. | `POST /viajes` con `solicitud_id`, `cliente_id`, `conductor_id`, `vehiculo_id`, `origen_latitud`… (snake_case, en castellano). **Falta** `vehicleType`, aunque lo tienen (`tipo_vehiculo`). Esperan `{ viaje_id, solicitud_id, estado: "CREADO" }`. |
+| Token de servicio | Sus roles son `CLIENTE`, `CONDUCTOR`, `OPERADOR`, `ADMINISTRADOR`: no hay rol de servicio. Para crear viajes M6 exige rol de servicio (`SYSTEM`, o los alias `SERVICIO` / `SERVICE` desde el 11/11). | No llaman a M6 todavía. |
+| Redespacho | Fuera de su versión. Usan `solicitud_id` como `requestId` **fijo**: al redespachar, M6 devolvería el viaje cancelado (`200`) en vez de crear uno nuevo. | No lo mencionan. Publican `conductor.asignado` (para M6 y M8) como alternativa por evento. |
+| Eventos | No usan RabbitMQ: hoy no se enterarían de `TripCancelled`. | Catálogo de eventos propio; no escuchan los de M6. |
+
+**Decisión:** mantenemos nuestro contrato. Lo compartimos con el Grupo 12 (la otra implementación
+de M6), y cambiarlo para un M5 rompería la unificación. Los dos grupos de M5 todavía no tienen la
+llamada implementada, así que adaptarse no les cuesta rehacer código.
+
+**Pendiente de acordar:**
+1. **Ambos:** mandar el cuerpo completo de `POST /trips` en camelCase y en inglés (ver propuesta de
+   arriba), y tomar `201`/`200` como éxito y `409` como conflicto.
+2. **Redespacho:** al volver a buscar conductor, usar un `requestId` **nuevo** derivado de la
+   solicitud y el intento (por ejemplo, UUID v5 de `solicitud_id + ":" + intento`). Así cada intento
+   es reintentable sin duplicar, y el redespacho crea un viaje nuevo.
+3. **Ambos:** escuchar `trips.trip.cancelled` en el exchange `movilidad.eventos` y redespachar
+   cuando `requiresRedispatch` sea `true`.
+4. **Consorcio / M1:** que exista un rol de servicio en los tokens para las llamadas entre
+   módulos. M6 acepta `SYSTEM`, `SERVICIO` o `SERVICE`, en `role` o en la lista `roles`.
+
+### Mensaje para el Grupo 4
+
+> Hola, somos el Grupo 5 (M6 – Viajes). Vimos que su `openapi-a.yml` ya toma nuestro contrato
+> (`POST /trips`, `solicitud_id` como `requestId`). ¡Genial! Una novedad que les simplifica: junto
+> con el Grupo 12 pasamos `vehicleType` a `AUTO`/`MOTO`, así que ya no hace falta convertirlo a
+> `CAR`/`MOTORCYCLE`. Para cerrar la integración:
+> 1. En `notificaciones.js`, `conductorAsignado` hoy manda `{ solicitudId, conductorId, ofertaId }`.
+>    `POST /trips` necesita `requestId, clientId, driverId, vehicleId, vehicleType,
+>    originLatitude, originLongitude, destinationLatitude, destinationLongitude` (y opcionales
+>    `reservationId`, `originAddress`, `destinationAddress`). Está todo en nuestro
+>    `contratos/openapi.yaml`. Respondemos `201` (creado), `200` (ya existía, reintento seguro) o
+>    `409` (mismo `requestId` con otros datos).
+> 2. Para crear viajes M6 pide un JWT con rol de servicio: `SYSTEM`, `SERVICIO` o `SERVICE`, en
+>    `role` o en la lista `roles`. Sus roles no tienen uno de servicio: ¿lo planteamos juntos a la
+>    cátedra / M1?
+> 3. Redespacho: si usan `solicitud_id` fijo como `requestId`, al redespachar les devolveríamos el
+>    viaje cancelado. Proponemos un `requestId` por intento, por ejemplo un UUID v5 de
+>    `solicitud_id + ":" + intento`.
+> 4. Cuando un conductor cancela antes de iniciar, publicamos `trips.trip.cancelled` (exchange
+>    `movilidad.eventos`) con `requiresRedispatch: true`. ¿Pueden escucharlo para redespachar?
+>    Puede llegar repetido: conviene ignorar los `eventId` ya procesados. ¡Gracias!
+
+### Mensaje para el Grupo 13
+
+> Hola, somos el Grupo 5 (M6 – Viajes). Vimos su `Contratos/integracion_m6.yml` (crear el viaje
+> después de asignar conductor). Nuestro contrato ya está definido y unificado con el Grupo 12 (la
+> otra implementación de M6), así que les pedimos adaptar la propuesta a él. Como todavía no lo
+> implementaron, son sólo nombres:
+> - Ruta: `POST /trips` (no `/viajes`), con JWT de servicio (rol `SYSTEM`, `SERVICIO` o `SERVICE`).
+> - Cuerpo en camelCase y en inglés: `requestId` (su `solicitud_id`), `clientId`, `driverId`,
+>   `vehicleId`, `vehicleType` (`AUTO`/`MOTO`, los mismos valores que su `tipo_vehiculo`),
+>   `originLatitude`, `originLongitude`, `destinationLatitude`, `destinationLongitude`, y opcionales
+>   `reservationId`, `originAddress`, `destinationAddress`.
+> - Respuesta: `201` con el viaje completo (`id`, `requestId`, `state: "PENDING_ARRIVAL"`, …),
+>   `200` si ya existía para ese `requestId` (reintento seguro), `409` si existe con otros datos y
+>   `400` si hay datos inválidos.
+>
+> Para el redespacho: cuando un conductor cancela antes de iniciar, publicamos
+> `trips.trip.cancelled` (exchange `movilidad.eventos`) con `requiresRedispatch: true`; al
+> redespachar, usen un `requestId` nuevo por intento. El contrato completo está en nuestro
+> `contratos/openapi.yaml`. ¡Gracias!
 
 **Acordado:** _(completar)_
 
@@ -319,8 +386,10 @@ código falso, QR reusado y QR de otro viaje). Problemas encontrados en los otro
    en cada TP.
 
 **Lo que hoy espera M6 del token:**
-- JWT con `sub` (id del usuario, o nombre del módulo para servicios), `role`
-  (`CLIENT | DRIVER | OPERATOR | SYSTEM`) y **`exp` obligatorio**.
+- JWT con `sub` o `identidad_id` (id del usuario, o nombre del módulo para servicios), el rol en
+  `role` (string) o `roles` (lista), y **`exp` obligatorio**. Se aceptan `CLIENT`, `DRIVER`,
+  `OPERATOR` y `SYSTEM`, y sus alias `CLIENTE`, `CONDUCTOR`, `OPERADOR`, `SERVICIO` / `SERVICE`
+  (igual que el Grupo 12).
 - Firma HS256 con secreto compartido (para desarrollo).
 - Ya está preparado para exigir `iss` (emisor) y `aud` (audiencia) si se configuran.
 
@@ -420,7 +489,7 @@ pasa a ser.
   `durationMinutes` recibiría un error. Si prefieren que lo ignoremos, lo hablamos (parte 3, punto D).
 
 **Paso 4 – Crear el viaje: campos que les faltan.**
-- Agregar `vehicleType` (`CAR` o `MOTORCYCLE`, obligatorio), `reservationId` (opcional, `uuid` o
+- Agregar `vehicleType` (`AUTO` o `MOTO`, obligatorio; antes del 11/11 era `CAR` o `MOTORCYCLE`), `reservationId` (opcional, `uuid` o
   `null`, para M9) y `originAddress` / `destinationAddress` (opcionales, hasta 300 caracteres).
 - El `409 REQUEST_ID_CONFLICT` se decide comparando **todos** los datos de creación, incluidos
   estos campos.
