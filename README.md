@@ -191,6 +191,8 @@ el `RelevadorDeEventos` publica en RabbitMQ los eventos guardados en la bandeja 
 | `M8_PROVEEDORES`, `M8_TIMEOUT_MS` | M8 a consultar (`g7`, `g10` o ambos) y timeout en ms, si `VALIDADOR_QR=m8` | `g7,g10`, `2000` |
 | `M8_G7_URL`, `M8_G7_RUTA_QR`, `M8_G7_TOKEN` | URL, ruta de validación del QR y JWT de servicio del M8 del Grupo 7 | —, `/api/v1/qr/validaciones`, — |
 | `M8_G10_URL`, `M8_G10_RUTA_QR`, `M8_G10_TOKEN` | Lo mismo para el M8 del Grupo 10 (contrato coordinado con el G7) | —, `/api/v1/qr/validaciones`, — |
+| `REGISTRO_TARIFA` | `ninguno` o `m7`: al completar el viaje registra la tarifa final en M7 | `ninguno` |
+| `M7_URL`, `M7_TOKEN`, `M7_TIMEOUT_MS` | URL de **un** M7 (Grupo 6 u 11), JWT de servicio y timeout en ms, si `REGISTRO_TARIFA=m7` | —, —, `2000` |
 
 ## Estado
 

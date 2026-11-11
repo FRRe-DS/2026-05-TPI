@@ -5,6 +5,7 @@ import {
   BANDEJA_DE_SALIDA,
   CONFIGURACION_VIAJES,
   PUBLICADOR_EVENTOS,
+  REGISTRADOR_TARIFA,
   RELOJ,
   REPOSITORIO_VIAJES,
   VALIDADOR_CODIGO,
@@ -18,6 +19,8 @@ import { PublicadorEventosRabbitMQ } from './infraestructura/publicador-eventos.
 import { BandejaDeSalidaPostgres } from './infraestructura/postgres/bandeja-de-salida.postgres';
 import { CierrePoolPostgres, crearPoolPostgres, POOL_POSTGRES } from './infraestructura/postgres/conexion';
 import { RepositorioViajesPostgres } from './infraestructura/postgres/repositorio-viajes.postgres';
+import { RegistradorTarifaM7 } from './infraestructura/registrador-tarifa.m7';
+import { RegistradorTarifaNinguno } from './infraestructura/registrador-tarifa.ninguno';
 import { RepositorioViajesEnMemoria } from './infraestructura/repositorio-viajes.memoria';
 import { proveedoresDesdeEntorno, ValidadorCodigoM8 } from './infraestructura/validador-codigo.m8';
 import { ValidadorCodigoSimulado } from './infraestructura/validador-codigo.simulado';
@@ -87,6 +90,18 @@ import { ValidadorCodigoSimulado } from './infraestructura/validador-codigo.simu
               proveedoresDesdeEntorno((nombre) => config.get<string>(nombre), Number(config.get('M8_TIMEOUT_MS', 2000))),
             )
           : new ValidadorCodigoSimulado(),
+    },
+    {
+      provide: REGISTRADOR_TARIFA,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        config.get('REGISTRO_TARIFA', 'ninguno') === 'm7'
+          ? new RegistradorTarifaM7(
+              config.getOrThrow('M7_URL'),
+              Number(config.get('M7_TIMEOUT_MS', 2000)),
+              config.get<string>('M7_TOKEN') || undefined,
+            )
+          : new RegistradorTarifaNinguno(),
     },
   ],
   // Los usa el health check detallado (salud/).

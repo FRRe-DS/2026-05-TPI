@@ -21,6 +21,8 @@ import {
   CONFIGURACION_VIAJES,
   FiltrosViajes,
   PaginaDeViajes,
+  REGISTRADOR_TARIFA,
+  RegistradorTarifaFinal,
   RELOJ,
   Reloj,
   REPOSITORIO_VIAJES,
@@ -50,6 +52,7 @@ export class ViajesService {
     @Inject(VALIDADOR_CODIGO) private readonly validadorCodigo: ValidadorCodigoVerificacion,
     @Inject(RELOJ) private readonly reloj: Reloj,
     @Inject(CONFIGURACION_VIAJES) private readonly config: ConfiguracionViaje,
+    @Inject(REGISTRADOR_TARIFA) private readonly registradorTarifa: RegistradorTarifaFinal,
   ) {}
 
   /**
@@ -122,8 +125,11 @@ export class ViajesService {
     });
   }
 
-  finalizar(tripId: string, datos: DatosFinalizacion, versionEsperada: VersionEsperada, ctx: Contexto): Promise<Viaje> {
-    return this.ejecutar(tripId, versionEsperada, ctx, (viaje, ahora) => viaje.finalizar(ctx.actor, datos, ahora));
+  /** Completa el viaje y, ya guardado, le pasa a M7 la distancia y el tiempo reales para la tarifa final. */
+  async finalizar(tripId: string, datos: DatosFinalizacion, versionEsperada: VersionEsperada, ctx: Contexto): Promise<Viaje> {
+    const viaje = await this.ejecutar(tripId, versionEsperada, ctx, (v, ahora) => v.finalizar(ctx.actor, datos, ahora));
+    await this.registradorTarifa.registrar(viaje, ctx.correlationId);
+    return viaje;
   }
 
   cancelar(

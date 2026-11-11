@@ -78,6 +78,14 @@ export interface ValidadorCodigoVerificacion {
   validarYConsumir(tripId: string, code: string, correlationId: string): Promise<ResultadoValidacionCodigo>;
 }
 
+/**
+ * Registra en M7 la tarifa final de un viaje completado (RF-6.5, RF-7.1).
+ * Nunca lanza: si M7 no está disponible, el viaje igual queda completado y el problema se registra en el log.
+ */
+export interface RegistradorTarifaFinal {
+  registrar(viaje: Viaje, correlationId: string): Promise<void>;
+}
+
 export interface Reloj {
   ahora(): Date;
 }
@@ -87,5 +95,6 @@ export const REPOSITORIO_VIAJES = Symbol('RepositorioViajes');
 export const PUBLICADOR_EVENTOS = Symbol('PublicadorEventos');
 export const BANDEJA_DE_SALIDA = Symbol('BandejaDeSalida');
 export const VALIDADOR_CODIGO = Symbol('ValidadorCodigoVerificacion');
+export const REGISTRADOR_TARIFA = Symbol('RegistradorTarifaFinal');
 export const RELOJ = Symbol('Reloj');
 export const CONFIGURACION_VIAJES = Symbol('ConfiguracionViaje');

@@ -24,7 +24,7 @@ Cuando se cierra un acuerdo:
 | M8 Notificaciones | 7 y 10 | Generación y validación del QR, eventos | Alta | Repos revisados; M6 adaptado a ambos; mensajes listos para enviar |
 | Cátedra | — | Quién hace M1, formato del token y aprobación del stack (RNF-01) | Alta | Sin enviar |
 | M6 (otra impl.) | 12 | Unificar el contrato de M6 (guía paso a paso de qué cambia cada uno) | Alta | Sin enviar |
-| M7 Pagos | 6 y 11 | Datos para cobro y cargo de cancelación | Media | Sin enviar |
+| M7 Pagos | 6 y 11 | Datos para cobro y cargo de cancelación | Media | Contrato común revisado; M6 registra la tarifa final (probado con el G6); pago y cargo pendientes |
 | M4 Ubicación | 3 y 14 | Liberar al conductor al terminar o cancelar | Media | Sin enviar |
 | M2 Clientes | 1 y 17 | Historial de viajes y calificación | Baja | Sin enviar |
 | M3 Conductores | 2 y 15 | Calificación del cliente | Baja | Sin enviar |
@@ -634,6 +634,48 @@ D. **`durationMinutes` en `POST /trips/{id}/complete`.** Podemos aceptarlo e ign
 ---
 
 ## M7 – Tarifas, Pagos y Liquidaciones (Grupos 6 y 11)
+
+### Estado actual (11/11): contrato común de M7 revisado
+
+Los Grupos 6 y 11 publicaron un contrato común en el repo de la cátedra
+(`FRRe-DS/2026-TPI`, `contratos/m7_tarifas/openapi.yml`). **Cambia nuestra propuesta:** M7 no
+escucha los eventos de M6 para cobrar; espera que **M6 lo llame por REST**:
+
+| Cuándo | Llamada a M7 | Estado en M6 |
+|---|---|---|
+| Al completar el viaje | `POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final` con `tipo_vehiculo` (`auto`/`moto`), `distancia_real_km` y `duracion_real_min` | **Hecho** (`REGISTRO_TARIFA=m7`). Probado contra el M7 del Grupo 6 |
+| Después de la tarifa final | `POST /api/v1/pagos` con `viaje_id`, `cliente_id`, `beneficiario_id`, `monto` y `metodo` | Pendiente: falta el medio de pago |
+| Al cancelar con cargo | `POST /api/v1/cargos-cancelacion` | Pendiente: falta la regla de cuándo hay cargo |
+
+Cómo quedó la tarifa final en M6:
+- Se llama a **un solo M7** (`M7_URL`). Registrar en los dos duplicaría el cobro.
+- Se llama después de guardar el viaje. Si M7 no responde o da error, el viaje igual queda
+  `COMPLETED` y el error queda en el log. Un `409` (ya estaba registrada) no es error.
+- No cambia la API de M6 ni sus eventos: `contratos/openapi.yaml` sigue igual al del Grupo 12.
+
+Lo que falta resolver con M7:
+1. **Medio de pago (`metodo`):** el pago lo exige (`tarjeta`, `efectivo`, `billetera_virtual`) y
+   hoy ningún contrato se lo pasa a M6 (ni M5 al crear el viaje, ni el nuestro, compartido con el
+   Grupo 12).
+2. **Cargo de cancelación:** el contrato dice que M6 lo registra "según sus reglas"; la consigna no
+   define cuándo corresponde.
+3. **Permisos:** el realm `ds-2026-realm` todavía no tiene los scopes `tarifas:write` ni
+   `pagos:write` para el cliente `grupo-05`. La prueba se hizo con `AUTH_DISABLED=true` en el M7.
+4. **Grupo 11:** su código todavía usa otras rutas (`/pagos/autorizar`, `/tarifas/estimar`), no
+   las del contrato común.
+
+**Mensaje:**
+
+> Hola, somos el Grupo 5 (M6 – Viajes). Leímos el contrato común de M7. Ya registramos la tarifa
+> final al completar cada viaje (`POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final`) y lo
+> probamos contra el M7 del Grupo 6. Para el pago y el cargo de cancelación nos faltan dos cosas:
+> 1. ¿De dónde sale el medio de pago (`metodo`)? Hoy no llega a M6 por ningún contrato.
+> 2. ¿Cuándo corresponde el cargo de cancelación? ¿Lo deciden ustedes o tenemos que definirlo nosotros?
+>
+> Además, para llamarlos con un token real, el cliente `grupo-05` necesita los scopes
+> `tarifas:write` y `pagos:write` en Keycloak. ¡Gracias!
+
+### Propuesta original (antes del contrato común)
 
 **Qué necesitamos:** M7 cobra cuando el viaje termina y decide si corresponde un cargo cuando se
 cancela. M6 **no calcula importes**: sólo publica los datos.

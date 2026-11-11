@@ -921,6 +921,43 @@ validan (redocly y AsyncAPI).
 porque su healthcheck espera sólo 10 s y el arranque (OpenSSL + Prisma) tarda más. Se le dio más
 margen en `demo/integracion-m8/docker-compose.yml`.
 
+## Paso 22 – Registrar la tarifa final en M7 (Grupos 6 y 11)
+
+Trabajado en la rama `integracion-m7-tarifa-final`.
+
+**Qué se encontró:** los dos grupos de M7 publicaron un contrato común en el repo de la cátedra
+(`contratos/m7_tarifas/openapi.yml`; el Grupo 6 lo usa como submódulo). Según ese contrato, M7 no
+escucha nuestros eventos para cobrar: M6 tiene que llamarlo por REST al completar el viaje
+(tarifa final y pago) y al cancelar con cargo. Del Grupo 6 ya funcionan las rutas de tarifas; las
+de pagos y cargos todavía no. El código del Grupo 11 usa otras rutas.
+
+**Qué se hizo (lo mínimo para quedar conectados):**
+- Puerto `RegistradorTarifaFinal` con dos implementaciones, elegidas con `REGISTRO_TARIFA`:
+  `ninguno` (por defecto, no hace nada) y `m7` (`registrador-tarifa.m7.ts`).
+- Al completar el viaje, después de guardarlo, M6 llama a
+  `POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final` con `tipo_vehiculo` en minúsculas,
+  `distancia_real_km` y `duracion_real_min` (los segundos pasados a minutos; nunca 0, porque M7
+  exige más de 0).
+- Si M7 falla o no responde en `M7_TIMEOUT_MS`, el viaje igual queda completado y el error va al
+  log. El `409` ("ya registrada") no se trata como error.
+- Se configura un solo M7 (`M7_URL`): a diferencia del QR de M8, llamar a los dos duplicaría el cobro.
+
+**Qué no se tocó:** la API de M6 (`contratos/openapi.yaml`, igual al del Grupo 12), los eventos
+(AsyncAPI), la validación del QR con M8 ni la base de datos. Con el valor por defecto todo
+funciona como antes.
+
+**Qué quedó pendiente** (detalle y mensaje en los acuerdos, sección M7): el pago, porque nadie le
+pasa a M6 el medio de pago, y el cargo de cancelación, porque falta definir cuándo corresponde.
+Tampoco están en Keycloak los scopes `tarifas:write` y `pagos:write`.
+
+**Cómo se probó:**
+- `npm run typecheck` sin errores. `npm test`: 80 unitarios (6 nuevos en
+  `registrador-tarifa.m7.spec.ts`) y 63 de integración en memoria, en verde.
+- Prueba real contra el M7 del Grupo 6 (corrido con Python, SQLite y `AUTH_DISABLED=true`): se
+  crearon reglas para auto y moto, se recorrió un viaje en M6 hasta `complete`, y M7 respondió
+  `201` y devolvió la tarifa final con la regla de moto (4,2 km × 300 + base 500 = 1760,5).
+- Con M7 apagado, `complete` respondió `200` igual y quedó el error en el log.
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |
