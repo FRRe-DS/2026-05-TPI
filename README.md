@@ -1,6 +1,6 @@
 # Grupo 5 – M6: Viajes y Ciclo de Vida
 
-[![M6 Viajes - CI](https://github.com/santileconte/grupo-5-dds-M6/actions/workflows/m6-viajes.yml/badge.svg)](https://github.com/santileconte/grupo-5-dds-M6/actions/workflows/m6-viajes.yml)
+[![M6 Viajes - CI](https://github.com/FRRe-DS/2026-05-TPI/actions/workflows/m6-viajes.yml/badge.svg?branch=main)](https://github.com/FRRe-DS/2026-05-TPI/actions/workflows/m6-viajes.yml)
 
 Trabajo práctico de Desarrollo de Software (2026). La consigna plantea una plataforma distribuida
 de movilidad urbana bajo demanda, organizada en nueve módulos. Al **Grupo 5** le corresponde
