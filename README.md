@@ -190,7 +190,7 @@ el `RelevadorDeEventos` publica en RabbitMQ los eventos guardados en la bandeja 
 | `VALIDADOR_QR` | `simulado` (código `QR-<tripId>`) o `m8` | `simulado` |
 | `M8_PROVEEDORES`, `M8_TIMEOUT_MS` | M8 a consultar (`g7`, `g10` o ambos) y timeout en ms, si `VALIDADOR_QR=m8` | `g7,g10`, `2000` |
 | `M8_G7_URL`, `M8_G7_RUTA_QR`, `M8_G7_TOKEN` | URL, ruta de validación del QR y JWT de servicio del M8 del Grupo 7 | —, `/api/v1/qr/validaciones`, — |
-| `M8_G10_URL`, `M8_G10_RUTA_QR`, `M8_G10_TOKEN` | Lo mismo para el M8 del Grupo 10 | —, `/api/v1/documents/qr/verify`, — |
+| `M8_G10_URL`, `M8_G10_RUTA_QR`, `M8_G10_TOKEN` | Lo mismo para el M8 del Grupo 10 (contrato coordinado con el G7) | —, `/api/v1/qr/validaciones`, — |
 
 ## Estado
 

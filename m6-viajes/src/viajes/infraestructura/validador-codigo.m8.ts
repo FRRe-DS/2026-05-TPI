@@ -10,9 +10,10 @@ import { ResultadoValidacionCodigo, ValidadorCodigoVerificacion } from '../aplic
  * dos (el que use la app del cliente) y M6 no sabe cuál, así que se le pregunta a todos en paralelo.
  * Cada token existe en un solo M8, por lo que a lo sumo uno lo reconoce y lo consume.
  *
- * Contratos de cada grupo (ver docs/acuerdos-con-otros-grupos.md, sección M8):
- *  - Grupo 7:  POST /api/v1/qr/validaciones   { token, viajeId } → 200 | 404 | 409 | 422
- *  - Grupo 10: POST /api/v1/documents/qr/verify { token, tripId } → 200 { valid } | 400 | 404 | 410
+ * Los dos grupos comparten un contrato coordinado (ver docs/acuerdos-con-otros-grupos.md, sección M8):
+ *   POST /api/v1/qr/validaciones  { token, viajeId }  →  200 | 404 no existe | 409 usado | 422 vencido u otro viaje
+ * La ruta se puede cambiar por proveedor (M8_G7_RUTA_QR, M8_G10_RUTA_QR) mientras algún grupo no la
+ * tenga implementada donde dice el contrato.
  *
  * Cómo se combinan las respuestas:
  *  - Si alguno lo acepta → VALIDO.
@@ -37,10 +38,8 @@ export interface ConfiguracionProveedorM8 {
 /** Resultado de preguntarle a un solo M8. */
 export type RespuestaProveedor = 'VALIDO' | 'INVALIDO' | 'DESCONOCIDO' | 'NO_DISPONIBLE';
 
-export const RUTAS_POR_DEFECTO: Record<VarianteM8, string> = {
-  g7: '/api/v1/qr/validaciones',
-  g10: '/api/v1/documents/qr/verify',
-};
+/** Ruta del contrato coordinado entre los grupos 7 y 10. */
+export const RUTA_POR_DEFECTO = '/api/v1/qr/validaciones';
 
 const NOMBRES: Record<VarianteM8, string> = { g7: 'M8 (Grupo 7)', g10: 'M8 (Grupo 10)' };
 
@@ -54,7 +53,7 @@ export class ProveedorQrM8 {
     private readonly timeoutMs: number,
   ) {
     this.nombre = NOMBRES[config.variante];
-    this.url = config.urlBase.replace(/\/+$/, '') + (config.ruta ?? RUTAS_POR_DEFECTO[config.variante]);
+    this.url = config.urlBase.replace(/\/+$/, '') + (config.ruta ?? RUTA_POR_DEFECTO);
   }
 
   async validar(tripId: string, code: string, correlationId: string): Promise<RespuestaProveedor> {
@@ -69,8 +68,7 @@ export class ProveedorQrM8 {
     if (this.config.tokenServicio) {
       headers.Authorization = `Bearer ${this.config.tokenServicio}`;
     }
-    // Cada grupo nombra distinto el id del viaje, y el Grupo 10 rechaza campos que no conoce.
-    const cuerpo = this.config.variante === 'g7' ? { token: code, viajeId: tripId } : { token: code, tripId };
+    const cuerpo = { token: code, viajeId: tripId };
 
     let respuesta: Response;
     try {

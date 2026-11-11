@@ -119,8 +119,9 @@ async function generarQrG7(viaje, archivo) {
 }
 
 async function generarQrG10(viaje, archivo) {
-  const r = await llamar('POST', `${G10}/api/v1/documents/qr/generate`, { cuerpo: { tripId: viaje.id, passengerId: viaje.clientId, ttlSeconds: 300 } });
-  guardarImagen(archivo, r.datos?.qrDataUrl);
+  // Ruta del contrato coordinado G7 + G10 (la misma que el G7).
+  const r = await llamar('POST', `${G10}/api/v1/viajes/${viaje.id}/qr`, { cuerpo: { clienteId: viaje.clientId, validezSegundos: 300 } });
+  guardarImagen(archivo, r.datos?.imagenPng ?? r.datos?.qrDataUrl);
   return r.datos?.token;
 }
 

@@ -874,6 +874,21 @@ código falso, de un QR reusado y de un QR de otro viaje.
 que usa el G10 no arrancó en Docker Desktop (error al leer la cookie de Erlang); con la
 `3.13-management-alpine` funciona.
 
+## Paso 20 – Contrato coordinado de los dos M8 y paso a `main`
+
+**Qué se encontró (11/11):** el Grupo 10 adoptó en su rama `develop` el mismo contrato que el
+Grupo 7: su `openapi.yml` es idéntico al del G7. Ya implementa `POST /api/v1/qr/validaciones` con
+`{ token, viajeId }` y arregló su Dockerfile. El G7 no tuvo cambios.
+
+**Qué se hizo:** el validador de M6 manda a los dos M8 la misma ruta y el mismo cuerpo. Se quitó
+el formato propio del G10 (`/documents/qr/verify` con `tripId`). La demo genera el QR del G10 por la
+ruta del contrato, y el laboratorio usa el repo del G10 en `develop`.
+
+**Cómo se probó:** tests del validador (18) y demo con los dos M8, M6 5 de 5.
+
+**Observaciones para el G10** (en los acuerdos): exige el rol `SERVICIO` y rechaza `SYSTEM` con
+`403`, y no verifica la firma del JWT.
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |
