@@ -75,6 +75,14 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRETO: "${JWT_SECRETO:?Falta JWT_SECRETO - copiá .env.example a .env}"
       VALIDADOR_QR: ${VALIDADOR_QR:-simulado}
+      M8_PROVEEDORES: ${M8_PROVEEDORES:-g7,g10}
+      M8_TIMEOUT_MS: ${M8_TIMEOUT_MS:-2000}
+      M8_G7_URL: ${M8_G7_URL:-}
+      M8_G7_RUTA_QR: ${M8_G7_RUTA_QR:-}
+      M8_G7_TOKEN: ${M8_G7_TOKEN:-}
+      M8_G10_URL: ${M8_G10_URL:-}
+      M8_G10_RUTA_QR: ${M8_G10_RUTA_QR:-}
+      M8_G10_TOKEN: ${M8_G10_TOKEN:-}
       ESPERA_MINIMA_ARRIBO_MINUTOS: ${ESPERA_MINIMA_ARRIBO_MINUTOS:-5}
     ports:
       - "${PUERTO:-3000}:3000"

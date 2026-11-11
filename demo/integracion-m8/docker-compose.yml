@@ -1,0 +1,140 @@
+# Laboratorio de integración M6 + M8 (Grupos 7 y 10).
+# Levanta los tres servicios con sus dependencias, cada uno en su propia red de puertos,
+# para probar de punta a punta el inicio de viaje con un QR real (RF-6.4, RF-8.3).
+#
+#   docker compose up -d --build --wait      (la primera vez tarda varios minutos)
+#   node demo.mjs                            (corre la demo y muestra cada paso)
+#   docker compose down -v                   (apaga y borra todo)
+#
+# Los repositorios de los otros grupos se buscan en "../../../otros grupos/" (al lado de este
+# repo). Si están en otro lugar, definir G7_REPO y G10_REPO en un archivo .env de esta carpeta.
+name: lab-m6-m8
+
+services:
+  # ---------------- M8 del Grupo 7 (.NET) ----------------
+  g7-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: m8_soporte_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d m8_soporte_db"]
+      interval: 3s
+      retries: 20
+
+  g7-redis:
+    image: redis:7-alpine
+
+  g7-rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: m8
+      RABBITMQ_DEFAULT_PASS: m8
+
+  g7-m8:
+    build:
+      context: ${G7_REPO:-../../../otros grupos/2026-07-TPI}
+    ports:
+      - "8088:8080"   # Swagger: http://localhost:8088/swagger
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__PostgresConnection: Host=g7-postgres;Port=5432;Database=m8_soporte_db;Username=postgres;Password=postgres
+      Redis__ConnectionString: g7-redis:6379
+      RabbitMQ__Host: g7-rabbitmq
+      RabbitMQ__Port: "5672"
+      RabbitMQ__User: m8
+      RabbitMQ__Password: m8
+    depends_on:
+      g7-postgres: { condition: service_healthy }
+      g7-redis: { condition: service_started }
+      g7-rabbitmq: { condition: service_started }
+
+  # ---------------- M8 del Grupo 10 (NestJS) ----------------
+  g10-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: m8_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d m8_db"]
+      interval: 3s
+      retries: 20
+
+  g10-redis:
+    image: redis:7-alpine
+
+  g10-rabbitmq:
+    # Misma versión que el G7: con "3-management-alpine" falla al leer la cookie de Erlang.
+    image: rabbitmq:3.13-management-alpine
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      retries: 30
+
+  g10-mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # Emails que manda el M8 del G10: http://localhost:8025
+
+  g10-m8:
+    build:
+      context: ${G10_REPO:-../../../otros grupos/2026-10-TPI}
+    ports:
+      - "3010:3000"   # Swagger: http://localhost:3010/api/docs
+    environment:
+      PORT: "3000"
+      API_PREFIX: api/v1
+      DATABASE_URL: postgresql://postgres:postgres@g10-postgres:5432/m8_db?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@g10-postgres:5432/m8_db?schema=public
+      REDIS_HOST: g10-redis
+      REDIS_PORT: "6379"
+      RABBITMQ_URL: amqp://guest:guest@g10-rabbitmq:5672
+      SMTP_HOST: g10-mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      SMTP_FROM: soporte@movilidadurbana.local
+    # La imagen de su rama `main` no arranca tal como está (le falta OpenSSL para Prisma, corre con
+    # un usuario sin permiso para prepararlo y no aplica las migraciones); en `develop` ya lo
+    # arreglaron. Este arranque funciona con las dos ramas, sin tocar su repositorio.
+    user: root
+    # Su healthcheck da 10 s de arranque; con los pasos de abajo tarda más y `--wait` lo daría por caído.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/v1/health || exit 1"]
+      interval: 5s
+      start_period: 120s
+      retries: 3
+    command: >-
+      sh -c "apk add --no-cache openssl >/dev/null &&
+             npx prisma generate --schema apps/backend/prisma/schema.prisma >/dev/null &&
+             npx prisma migrate deploy --schema apps/backend/prisma/schema.prisma &&
+             node apps/backend/dist/main"
+    depends_on:
+      g10-postgres: { condition: service_healthy }
+      g10-redis: { condition: service_started }
+      g10-rabbitmq: { condition: service_healthy }
+
+  # ---------------- M6 (nosotros) ----------------
+  m6:
+    build:
+      context: ../..
+      dockerfile: m6-viajes/Dockerfile
+    ports:
+      - "3006:3000"   # Salud: http://localhost:3006/health
+    environment:
+      JWT_SECRETO: secreto-del-laboratorio-0123456789
+      PERSISTENCIA: memoria
+      PUBLICADOR_EVENTOS: log
+      IDEMPOTENCIA: memoria
+      LOG_FORMATO: texto
+      VALIDADOR_QR: m8
+      M8_PROVEEDORES: g7,g10
+      M8_TIMEOUT_MS: "2000"
+      M8_G7_URL: http://g7-m8:8080
+      # El código actual del G7 valida en esta ruta, no en la de su contrato.
+      M8_G7_RUTA_QR: /api/Documentos/qr/validar
+      M8_G10_URL: http://g10-m8:3000
+    depends_on:
+      - g7-m8
+      - g10-m8

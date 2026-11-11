@@ -825,6 +825,70 @@ como en el Grupo 12.
 
 ---
 
+## Paso 18 – Integrar la validación del QR con los dos M8 (Grupos 7 y 10)
+
+Trabajado en la rama `integracion-m8-qr` para no interferir con `main`.
+
+**Qué se hizo:** se revisaron los repositorios de los dos grupos de M8 y se comparó su contrato
+con el nuestro (detalle y mensajes en `acuerdos-con-otros-grupos.md`, sección M8). Ninguno usaba
+el endpoint que habíamos propuesto, y cada uno define el suyo con nombres y códigos distintos.
+Como la app final tiene que funcionar con los dos, M6 se adaptó a ambos:
+
+- `validador-codigo.m8.ts` consulta en paralelo a los M8 configurados en `M8_PROVEEDORES`. Cada
+  QR existe en un solo M8, así que a lo sumo uno lo reconoce y lo consume.
+- Se manda a cada uno su formato (`viajeId` para G7, `tripId` para G10), con JWT de servicio,
+  `Idempotency-Key` estable (un reintento recibe la respuesta original) y `X-Request-Id`.
+- Variables nuevas: `M8_PROVEEDORES`, `M8_G7_URL`, `M8_G7_RUTA_QR`, `M8_G7_TOKEN` y las
+  equivalentes de G10. Reemplazan a `M8_URL`.
+- Tests unitarios nuevos en `validador-codigo.m8.spec.ts`.
+
+**Problemas encontrados en el cliente anterior:**
+1. Con el contrato del G7 (`200` sin campo `valido`) nunca se habría podido iniciar un viaje.
+2. No se mandaba `Authorization`: los dos M8 lo exigen en su contrato.
+3. Un `401`/`403` se tomaba como "QR inválido" y se le echaba la culpa al conductor. Ahora es 503
+   con un log de error.
+4. El código actual del G7 no verifica que el QR sea del viaje. M6 ahora compara el id del viaje
+   de la respuesta y rechaza si no coincide (se les avisó para que lo corrijan del lado de ellos).
+
+## Paso 19 – Prueba real de M6 con los dos M8
+
+**Qué se hizo:** se armó `demo/integracion-m8/`, un laboratorio con Docker que levanta M6 y los
+M8 de los grupos 7 y 10 desde sus repos, y un script (`node demo.mjs`) que recorre el inicio de
+viaje con un QR real y muestra cada pedido y respuesta.
+
+**Resultado:** M6, 5 de 5 verificaciones correctas: inicio con QR del G7 y del G10, rechazo de un
+código falso, de un QR reusado y de un QR de otro viaje.
+
+**Problemas encontrados en los otros grupos** (detalle y mensajes en `acuerdos-con-otros-grupos.md`):
+1. G7: generar el QR responde siempre `500` (atributo de validación mal ubicado en un `record`).
+   Para probar igual su validación, la demo guarda el QR en su Redis con el mismo formato que usa
+   su código.
+2. G7: el QR dura minutos en lugar de segundos.
+3. G7: su validación aceptó un QR de otro viaje. El control propio de M6 lo frenó, como se
+   esperaba.
+4. G10: su imagen Docker no arranca tal como está (OpenSSL, permisos y migraciones de Prisma). El
+   laboratorio lo corrige al iniciar.
+
+**Problemas propios al armar el laboratorio:** los tres sistemas usan los mismos puertos (5432,
+5672, 6379), así que el laboratorio expone sólo las APIs. La imagen `rabbitmq:3-management-alpine`
+que usa el G10 no arrancó en Docker Desktop (error al leer la cookie de Erlang); con la
+`3.13-management-alpine` funciona.
+
+## Paso 20 – Contrato coordinado de los dos M8 y paso a `main`
+
+**Qué se encontró (11/11):** el Grupo 10 adoptó en su rama `develop` el mismo contrato que el
+Grupo 7: su `openapi.yml` es idéntico al del G7. Ya implementa `POST /api/v1/qr/validaciones` con
+`{ token, viajeId }` y arregló su Dockerfile. El G7 no tuvo cambios.
+
+**Qué se hizo:** el validador de M6 manda a los dos M8 la misma ruta y el mismo cuerpo. Se quitó
+el formato propio del G10 (`/documents/qr/verify` con `tripId`). La demo genera el QR del G10 por la
+ruta del contrato, y el laboratorio usa el repo del G10 en `develop`.
+
+**Cómo se probó:** tests del validador (18) y demo con los dos M8, M6 5 de 5.
+
+**Observaciones para el G10** (en los acuerdos): exige el rol `SERVICIO` y rechaza `SYSTEM` con
+`403`, y no verifica la firma del JWT.
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |
@@ -893,7 +957,7 @@ grupo-5-dds/
 
 ## Próximos pasos
 
-1. **Mandar los mensajes** de `docs/acuerdos-con-otros-grupos.md`, empezando por M5, M8, la
+1. **Mandar los mensajes** de `docs/acuerdos-con-otros-grupos.md`, empezando por M5, M8 (ya hay uno para cada grupo), la
    cátedra y el Grupo 12. Ir completando la tabla de seguimiento y ajustar contratos y código
    según lo que se acuerde.
 2. **TP2 – lo que queda:**

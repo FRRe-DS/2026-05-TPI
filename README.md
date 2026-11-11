@@ -19,6 +19,7 @@ finalización, la cancelación y la auditoría.
 | [`docs/catalogo-eventos.md`](docs/catalogo-eventos.md) | Versión legible del catálogo de eventos y convenciones propuestas al consorcio. |
 | [`docs/decisiones/`](docs/decisiones) | Registros de decisiones de arquitectura (ADR). |
 | [`m6-viajes/`](m6-viajes) | Servicio en TypeScript y NestJS. |
+| [`demo/integracion-m8/`](demo/integracion-m8) | Laboratorio y demo: M6 con los M8 de los grupos 7 y 10, inicio de viaje con QR real. |
 | [`.github/workflows/m6-viajes.yml`](.github/workflows/m6-viajes.yml) | CI: tipos, tests, contratos e imagen Docker en cada push. |
 
 ## Servicio `m6-viajes`
@@ -187,7 +188,9 @@ el `RelevadorDeEventos` publica en RabbitMQ los eventos guardados en la bandeja 
 | `JWT_SECRETO` | Secreto para verificar los JWT (obligatorio, ≥ 16 caracteres) | — |
 | `ESPERA_MINIMA_ARRIBO_MINUTOS` | Espera antes de cancelar por `CLIENT_NO_SHOW` | `5` |
 | `VALIDADOR_QR` | `simulado` (código `QR-<tripId>`) o `m8` | `simulado` |
-| `M8_URL`, `M8_TIMEOUT_MS` | URL de M8 y timeout en ms, si `VALIDADOR_QR=m8` | —, `2000` |
+| `M8_PROVEEDORES`, `M8_TIMEOUT_MS` | M8 a consultar (`g7`, `g10` o ambos) y timeout en ms, si `VALIDADOR_QR=m8` | `g7,g10`, `2000` |
+| `M8_G7_URL`, `M8_G7_RUTA_QR`, `M8_G7_TOKEN` | URL, ruta de validación del QR y JWT de servicio del M8 del Grupo 7 | —, `/api/v1/qr/validaciones`, — |
+| `M8_G10_URL`, `M8_G10_RUTA_QR`, `M8_G10_TOKEN` | Lo mismo para el M8 del Grupo 10 (contrato coordinado con el G7) | —, `/api/v1/qr/validaciones`, — |
 
 ## Estado
 

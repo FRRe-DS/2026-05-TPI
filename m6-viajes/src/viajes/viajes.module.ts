@@ -19,7 +19,7 @@ import { BandejaDeSalidaPostgres } from './infraestructura/postgres/bandeja-de-s
 import { CierrePoolPostgres, crearPoolPostgres, POOL_POSTGRES } from './infraestructura/postgres/conexion';
 import { RepositorioViajesPostgres } from './infraestructura/postgres/repositorio-viajes.postgres';
 import { RepositorioViajesEnMemoria } from './infraestructura/repositorio-viajes.memoria';
-import { ValidadorCodigoM8 } from './infraestructura/validador-codigo.m8';
+import { proveedoresDesdeEntorno, ValidadorCodigoM8 } from './infraestructura/validador-codigo.m8';
 import { ValidadorCodigoSimulado } from './infraestructura/validador-codigo.simulado';
 
 /**
@@ -83,7 +83,9 @@ import { ValidadorCodigoSimulado } from './infraestructura/validador-codigo.simu
       inject: [ConfigService],
       useFactory: (config: ConfigService) =>
         config.get('VALIDADOR_QR', 'simulado') === 'm8'
-          ? new ValidadorCodigoM8(config.getOrThrow('M8_URL'), Number(config.get('M8_TIMEOUT_MS', 2000)))
+          ? new ValidadorCodigoM8(
+              proveedoresDesdeEntorno((nombre) => config.get<string>(nombre), Number(config.get('M8_TIMEOUT_MS', 2000))),
+            )
           : new ValidadorCodigoSimulado(),
     },
   ],
