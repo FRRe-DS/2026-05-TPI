@@ -109,8 +109,13 @@ necesita para decidir si corresponde un cargo (RF-7.4): quién canceló, el moti
 al cancelar y los instantes de asignación, arribo y cancelación.
 
 > **Actualización (11/11):** el contrato común de M7 (Grupos 6 y 11) espera que M6 registre el
-> cargo llamando a `POST /api/v1/cargos-cancelacion` cuando "según sus reglas" corresponda. Esa
-> regla todavía no está definida; queda pendiente con M7.
+> cargo llamando a `POST /api/v1/cargos-cancelacion` cuando "según sus reglas" corresponda. M6
+> aplica esta regla (propuesta al Grupo 6, falta que la confirme):
+> - **Hay cargo** si cancela el cliente con el conductor ya en el lugar (`previousState =
+>   DRIVER_ARRIVED`) o si cancela el conductor con `CLIENT_NO_SHOW`.
+> - **No hay cargo** en los demás casos (antes del arribo, otro motivo del conductor, el operador).
+>
+> El importe lo sigue calculando M7. Código: `dominio/cargo-cancelacion.ts`.
 
 ### R6-06. Finalización (RF-6.5)
 El conductor informa `distanceKm`. M6 calcula `durationSeconds` como
@@ -144,7 +149,7 @@ comprobante.
 |----------|--------------------------------------------------------------------------------------------|
 | M5       | Que la creación del viaje sea por `POST /trips` (síncrona) y que la devolución al despacho sea por el evento `TripCancelled` con `requiresRedispatch = true`. La idempotencia es por `requestId`; al re-despachar, M5 debe usar un `requestId` nuevo. |
 | M8       | Endpoint para validar y consumir el código QR (propuesta: `POST /qr/validaciones` con `{ viajeId, codigo }` y respuesta `{ valido: boolean }`). |
-| M7       | La tarifa final ya se registra al completar el viaje. Falta: de dónde sale el medio de pago y cuándo corresponde el cargo de cancelación. |
+| M7       | M6 ya registra tarifa final, pago y cargo. Falta que M7 confirme que el medio de pago lo resuelve M7 (M6 no manda `metodo`) y la regla de cargo de R6-05. |
 | M1       | Formato del token (JWT), claims de rol (`CLIENT`, `DRIVER`, `OPERATOR`) y tokens de servicio para M5 y M2. |
 | M4       | Si M4 libera al conductor consumiendo `TripCompleted` y `TripCancelled`, o si M6 debe avisarle. |
 | Grupo 12 | La otra implementación de M6: unificar el contrato para que sean intercambiables.           |

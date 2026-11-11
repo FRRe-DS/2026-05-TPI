@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { correspondeCargoCancelacion } from '../dominio/cargo-cancelacion';
 import { DatosInvalidosError } from '../dominio/errores';
 import { Actor, Rol, TransicionViaje } from '../dominio/tipos';
 import {
@@ -21,8 +22,8 @@ import {
   CONFIGURACION_VIAJES,
   FiltrosViajes,
   PaginaDeViajes,
-  REGISTRADOR_TARIFA,
-  RegistradorTarifaFinal,
+  REGISTRADOR_COBRO,
+  RegistradorCobro,
   RELOJ,
   Reloj,
   REPOSITORIO_VIAJES,
@@ -52,7 +53,7 @@ export class ViajesService {
     @Inject(VALIDADOR_CODIGO) private readonly validadorCodigo: ValidadorCodigoVerificacion,
     @Inject(RELOJ) private readonly reloj: Reloj,
     @Inject(CONFIGURACION_VIAJES) private readonly config: ConfiguracionViaje,
-    @Inject(REGISTRADOR_TARIFA) private readonly registradorTarifa: RegistradorTarifaFinal,
+    @Inject(REGISTRADOR_COBRO) private readonly registradorCobro: RegistradorCobro,
   ) {}
 
   /**
@@ -125,22 +126,27 @@ export class ViajesService {
     });
   }
 
-  /** Completa el viaje y, ya guardado, le pasa a M7 la distancia y el tiempo reales para la tarifa final. */
+  /** Completa el viaje y, ya guardado, le pide a M7 la tarifa final y el pago. */
   async finalizar(tripId: string, datos: DatosFinalizacion, versionEsperada: VersionEsperada, ctx: Contexto): Promise<Viaje> {
     const viaje = await this.ejecutar(tripId, versionEsperada, ctx, (v, ahora) => v.finalizar(ctx.actor, datos, ahora));
-    await this.registradorTarifa.registrar(viaje, ctx.correlationId);
+    await this.registradorCobro.viajeCompletado(viaje, ctx.correlationId);
     return viaje;
   }
 
-  cancelar(
+  /** Cancela el viaje y, ya guardado, le pide a M7 el cargo si la regla R6-05 lo indica. */
+  async cancelar(
     tripId: string,
     solicitud: SolicitudCancelacion,
     versionEsperada: VersionEsperada,
     ctx: Contexto,
   ): Promise<Viaje> {
-    return this.ejecutar(tripId, versionEsperada, ctx, (viaje, ahora) =>
-      viaje.cancelar(ctx.actor, solicitud, ahora, this.config),
+    const viaje = await this.ejecutar(tripId, versionEsperada, ctx, (v, ahora) =>
+      v.cancelar(ctx.actor, solicitud, ahora, this.config),
     );
+    if (correspondeCargoCancelacion(viaje.toProps().cancellation)) {
+      await this.registradorCobro.cargoCancelacion(viaje, ctx.correlationId);
+    }
+    return viaje;
   }
 
   /**

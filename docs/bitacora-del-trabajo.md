@@ -921,7 +921,7 @@ validan (redocly y AsyncAPI).
 porque su healthcheck espera sólo 10 s y el arranque (OpenSSL + Prisma) tarda más. Se le dio más
 margen en `demo/integracion-m8/docker-compose.yml`.
 
-## Paso 22 – Registrar la tarifa final en M7 (Grupos 6 y 11)
+## Paso 22 – Conectar M6 con M7: tarifa final, pago y cargo de cancelación (Grupos 6 y 11)
 
 Trabajado en la rama `integracion-m7-tarifa-final`.
 
@@ -932,14 +932,22 @@ escucha nuestros eventos para cobrar: M6 tiene que llamarlo por REST al completa
 de pagos y cargos todavía no. El código del Grupo 11 usa otras rutas.
 
 **Qué se hizo (lo mínimo para quedar conectados):**
-- Puerto `RegistradorTarifaFinal` con dos implementaciones, elegidas con `REGISTRO_TARIFA`:
-  `ninguno` (por defecto, no hace nada) y `m7` (`registrador-tarifa.m7.ts`).
-- Al completar el viaje, después de guardarlo, M6 llama a
-  `POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final` con `tipo_vehiculo` en minúsculas,
-  `distancia_real_km` y `duracion_real_min` (los segundos pasados a minutos; nunca 0, porque M7
-  exige más de 0).
-- Si M7 falla o no responde en `M7_TIMEOUT_MS`, el viaje igual queda completado y el error va al
-  log. El `409` ("ya registrada") no se trata como error.
+- Puerto `RegistradorCobro` con dos implementaciones, elegidas con `REGISTRO_TARIFA`: `ninguno`
+  (por defecto, no hace nada) y `m7` (`registrador-cobro.m7.ts`).
+- **Al completar el viaje**, después de guardarlo:
+  1. `POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final` con `tipo_vehiculo` en minúsculas,
+     `distancia_real_km` y `duracion_real_min` (los segundos pasados a minutos; nunca 0, porque M7
+     exige más de 0). Si responde `409` (ya estaba), se lee el total con `GET`.
+  2. `POST /api/v1/pagos` por `desglose.total`, con `Idempotency-Key: m6-pago-<viaje_id>`.
+- **Al cancelar**, si corresponde cargo según la regla R6-05 (`dominio/cargo-cancelacion.ts`): el
+  cliente cancela con el conductor ya en el lugar, o el conductor cancela con `CLIENT_NO_SHOW`. Se
+  llama a `POST /api/v1/cargos-cancelacion` con `Idempotency-Key: m6-cargo-<viaje_id>`.
+- **No se manda `metodo`** (medio de pago): ningún contrato se lo pasa a M6. Le proponemos al
+  Grupo 6 que lo resuelva M7 con el medio que eligió el cliente (RF-7.2). Esta decisión, la regla
+  del cargo y el orden tarifa → pago están en `docs/para-grupo-6-integracion-m7.md` para que las
+  confirmen.
+- Si M7 falla o no responde en `M7_TIMEOUT_MS`, el viaje igual queda completado o cancelado y el
+  error va al log. `200` y `409` no se tratan como error.
 - Se configura un solo M7 (`M7_URL`): a diferencia del QR de M8, llamar a los dos duplicaría el cobro.
 
 **Qué no se tocó:** la API de M6 (`contratos/openapi.yaml`, igual al del Grupo 12), los eventos
@@ -947,22 +955,24 @@ de pagos y cargos todavía no. El código del Grupo 11 usa otras rutas.
 funciona como antes.
 
 **Limitaciones de hacerlo simple** (sin reintentos ni cola):
-- Si M7 falla al completar, esa tarifa final no se vuelve a mandar sola: hay que registrarla a mano
-  en M7 (repetir `complete` no vuelve a llamar).
-- `complete` puede tardar hasta `M7_TIMEOUT_MS` (2 s por defecto) más si M7 no responde.
-
-**Qué quedó pendiente** (detalle y mensaje en los acuerdos, sección M7): el pago, porque nadie le
-pasa a M6 el medio de pago, y el cargo de cancelación, porque falta definir cuándo corresponde.
-Tampoco están en Keycloak los scopes `tarifas:write` y `pagos:write`.
+- Si M7 falla, esa tarifa, pago o cargo no se vuelve a mandar solo: hay que registrarlo a mano en
+  M7 (repetir la acción en M6 no vuelve a llamar).
+- `complete` puede tardar hasta tres veces `M7_TIMEOUT_MS` (2 s por defecto) más si M7 no
+  responde; `cancel`, hasta una vez.
+- Hasta que M7 acepte el pago y el cargo sin `metodo`, esas dos llamadas van a fallar y dejar un
+  error en el log por cada viaje.
 
 **Cómo se probó:**
-- `npm run typecheck` sin errores. `npm test`: 80 unitarios (6 nuevos en
-  `registrador-tarifa.m7.spec.ts`) y 63 de integración en memoria, en verde.
+- `npm run typecheck` sin errores. `npm test`: 91 unitarios y 67 de integración en memoria, en
+  verde. Nuevos: `registrador-cobro.m7.spec.ts` (cuerpos, orden tarifa → pago, `409`, fallos),
+  `cargo-cancelacion.spec.ts` (la regla) y `test/cobro-m7.e2e-spec.ts` (cuándo avisa el servicio).
 - Prueba real contra el M7 del Grupo 6 (corrido con Python, SQLite y `AUTH_DISABLED=true`): se
-  crearon reglas para auto y moto, se recorrió un viaje en M6 hasta `complete`, y M7 respondió
-  `201` y devolvió la tarifa final con la regla de moto: base 500 + 4,2 km × 300 + 0,01 min × 50
-  = 1760,5 (el viaje de prueba duró menos de un segundo).
+  crearon reglas para auto y moto y se recorrió un viaje en M6 hasta `complete`. M7 respondió
+  `201` a la tarifa final con la regla de moto: base 500 + 4,2 km × 300 + 0,01 min × 50 = 1760,5
+  (el viaje de prueba duró menos de un segundo). M6 mandó el pago por 1760,5 y M7 respondió `404`,
+  porque todavía no tiene esa ruta; el viaje quedó completado igual.
 - Con M7 apagado, `complete` respondió `200` igual y quedó el error en el log.
+- El pago y el cargo sólo se probaron con respuestas simuladas.
 
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
@@ -1039,4 +1049,28 @@ grupo-5-dds/
    - **Seguridad con M1:** cuando se acuerde el formato, validar los tokens reales de M1
      (idealmente RS256 con clave pública, configurando `JWT_EMISOR` y `JWT_AUDIENCIA`).
    - **Integración distribuida (RNF-07):** probar M6 junto con los módulos de los otros grupos.
+3. **M7 (Grupos 6 y 11)**, después del paso 22:
+   - **Enviar `docs/para-grupo-6-integracion-m7.md`** al Grupo 6 (y al Grupo 11, que comparte el
+     contrato) y esperar que confirmen las decisiones A (M6 no manda `metodo`), B (regla del cargo,
+     R6-05) y C (tarifa final → pago).
+   - **Según lo que respondan:** si rechazan A, agregar `metodo` al pago y al cargo y definir de
+     dónde sale; si cambian B, ajustar `dominio/cargo-cancelacion.ts` y sus tests.
+   - **Cuando el Grupo 6 tenga `/api/v1/pagos` y `/api/v1/cargos-cancelacion`:** repetir la prueba
+     real (hasta ahora el pago y el cargo sólo se probaron con respuestas simuladas).
+   - **Correr lo que faltó probar del paso 22:** `npm run test:infra` (16 tests con PostgreSQL,
+     Redis y RabbitMQ) y M6 en Docker con `REGISTRO_TARIFA=m7`
+     (`M7_URL=http://host.docker.internal:8000`).
+4. **Token de servicio que se renueve solo** (para M7 y M8; va junto con "Seguridad con M1"):
+   - **Problema:** hoy M6 manda a M7 y a M8 un token fijo, copiado a mano en el `.env`
+     (`M7_TOKEN`, `M8_G7_TOKEN`, `M8_G10_TOKEN`). Los tokens de Keycloak vencen (5 minutos por
+     defecto, y el realm `ds-2026-realm` no cambia ese valor). Cuando M7 y M8 validen tokens, un
+     token fijo deja de servir a los pocos minutos y las llamadas reciben `401`.
+   - **Qué hacer:** que M6 le pida su propio token a Keycloak con *client credentials*
+     (`POST /realms/ds-2026-realm/protocol/openid-connect/token` con `grant_type=client_credentials`,
+     `client_id=grupo-05` y la clave del cliente), lo guarde y pida otro antes de que venza.
+     Reemplaza a las variables `*_TOKEN` por la URL de Keycloak y la clave del cliente.
+   - **Cuándo:** cuando M7 (o M8) empiece a validar tokens y el realm tenga los scopes
+     `tarifas:*` y `pagos:*` para `grupo-05`. Antes no se puede probar.
+   - **Cuidado:** la clave del cliente `grupo-05` está en el archivo del realm del repo de la
+     cátedra. No copiarla en este repo: va sólo en el `.env`, que no se sube.
 
