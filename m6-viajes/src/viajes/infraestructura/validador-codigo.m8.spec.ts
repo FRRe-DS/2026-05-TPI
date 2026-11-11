@@ -40,7 +40,7 @@ describe('ValidadorCodigoM8 (Grupos 7 y 10)', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('manda a cada M8 su ruta y su formato de cuerpo', async () => {
+  it('manda a los dos M8 la ruta y el cuerpo del contrato coordinado', async () => {
     const pedidos = simularM8({ [G7]: { status: 404 }, [G10]: { status: 200, cuerpo: { valid: true, tripId: VIAJE } } });
 
     await validador(['g7', 'g10'], { M8_G7_TOKEN: 'jwt-g7' }).validarYConsumir(VIAJE, 'tok', 'corr-1');
@@ -49,8 +49,8 @@ describe('ValidadorCodigoM8 (Grupos 7 y 10)', () => {
     const g10 = pedidos.find((p) => p.url.startsWith(G10))!;
     expect(g7.url).toBe(`${G7}/api/v1/qr/validaciones`);
     expect(JSON.parse(String(g7.init.body))).toEqual({ token: 'tok', viajeId: VIAJE });
-    expect(g10.url).toBe(`${G10}/api/v1/documents/qr/verify`);
-    expect(JSON.parse(String(g10.init.body))).toEqual({ token: 'tok', tripId: VIAJE });
+    expect(g10.url).toBe(`${G10}/api/v1/qr/validaciones`);
+    expect(JSON.parse(String(g10.init.body))).toEqual({ token: 'tok', viajeId: VIAJE });
 
     const h7 = g7.init.headers as Record<string, string>;
     expect(h7.Authorization).toBe('Bearer jwt-g7');

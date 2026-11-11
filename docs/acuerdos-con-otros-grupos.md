@@ -302,21 +302,44 @@ código falso, QR reusado y QR de otro viaje). Problemas encontrados en los otro
   Prisma, corre con `USER node` sin permiso para preparar Prisma, y no aplica las migraciones
   (`prisma migrate deploy`) antes de iniciar. Con eso corregido, todo su flujo de QR anduvo bien.
 
+### Contrato coordinado entre G7 y G10 (revisado el 11/11)
+
+El Grupo 10 adoptó **el mismo contrato que el Grupo 7**: el `openapi.yml` de su rama `develop`
+(10/11) es idéntico línea por línea al `docs/m8-openapi.yaml` del G7. En `develop` el G10 ya
+implementa `POST /api/v1/viajes/{viajeId}/qr` y `POST /api/v1/qr/validaciones` (y mantiene sus
+rutas viejas), y arregló su Dockerfile (OpenSSL y base de datos al arrancar).
+
+Cambios en M6:
+- A los dos M8 se les manda lo mismo: `POST /api/v1/qr/validaciones` con `{ token, viajeId }`. Se
+  eliminó el formato propio del G10 (`/documents/qr/verify` con `tripId`).
+- El G7 todavía no tiene esa ruta en su código: sigue haciendo falta `M8_G7_RUTA_QR`.
+- Probado con el laboratorio: el G10 de `develop` genera y valida por las rutas del contrato.
+  M6: 5 de 5.
+
+Observaciones sobre el G10 (`develop`):
+- Exige que el token tenga rol `SERVICIO` (toma `rol`, `role` o el **primero** de `roles`). Un
+  token con `SYSTEM` recibe `403`, y M6 lo trataría como "M8 no disponible" (`503`).
+- **No verifica la firma del JWT:** sólo decodifica el payload, así que cualquiera puede armar un
+  token con rol `SERVICIO`. Además, sin header `Authorization` deja pasar el pedido.
+
 ### Pendiente de acordar
 
 1. **G7:** arreglar la generación del QR (`500`) y la duración (minutos → segundos).
-2. **G7:** alinear el código con su contrato (ruta y `viajeId` en el cuerpo) y verificar que el QR
-   pertenezca al viaje **antes** de consumirlo; hoy un QR de otro viaje se consume igual.
-3. **G10:** que su imagen Docker arranque sola (OpenSSL, permisos, migraciones).
-4. **G7:** recibir nuestros eventos por RabbitMQ (exchange `movilidad.eventos`, routing keys
+2. **G7:** implementar en el código la ruta y el cuerpo del contrato coordinado
+   (`/api/v1/qr/validaciones` con `viajeId`), y verificar que el QR pertenezca al viaje **antes**
+   de consumirlo; hoy un QR de otro viaje se consume igual.
+3. **G10:** unir `develop` a `main`; verificar la firma del JWT y exigirlo.
+4. **Consorcio:** nombre del rol de servicio. M6 acepta `SYSTEM`/`SERVICIO`/`SERVICE`; el G10 sólo
+   `SERVICIO`. Lo más simple: que M1 emita `SERVICIO` (o que el G10 acepte también `SYSTEM`).
+5. **G7:** recibir nuestros eventos por RabbitMQ (exchange `movilidad.eventos`, routing keys
    `trips.*.*`) en lugar de que M6 les haga `POST`. M6 no tiene emails ni teléfonos para armar
    `destinatarios`; eso lo puede resolver M8 con M2/M3.
-5. **G10:** escuchar los cinco eventos de M6 (`trips.trip.created`, `trips.driver.arrived`,
+6. **G10:** escuchar los cinco eventos de M6 (`trips.trip.created`, `trips.driver.arrived`,
    `trips.trip.started`, `trips.trip.completed`, `trips.trip.cancelled`) y usar el exchange común
    `movilidad.eventos` (o acordar un único nombre entre todos).
-6. **Ambos:** el QR dura 300 s (G10) o 600 s (G7); la app tiene que poder regenerarlo si vence
-   antes de que llegue el conductor. Lo genera la app del cliente, no un evento de M6.
-7. **Consorcio:** cómo obtiene M6 su JWT de servicio de M1.
+7. **Ambos:** el QR vence (600 s por defecto en el contrato); la app tiene que poder regenerarlo
+   si vence antes de que llegue el conductor. Lo genera la app del cliente, no un evento de M6.
+8. **Consorcio:** cómo obtiene M6 su JWT de servicio de M1.
 
 ### Mensaje para el Grupo 7
 
@@ -332,7 +355,8 @@ código falso, QR reusado y QR de otro viaje). Problemas encontrados en los otro
 > 2. En `QrService.GenerarAsync`, `TimeSpan.FromMinutes(validezSegundos)` debería ser
 >    `FromSeconds`: hoy un QR de 600 "segundos" dura 10 horas.
 > 3. La validación está en `POST /api/Documentos/qr/validar` y recibe sólo `{ token }`. ¿La pueden
->    pasar a la ruta y el cuerpo del contrato? Mientras tanto la configuramos por variable.
+>    pasar a la ruta y el cuerpo del contrato coordinado (el G10 ya lo hizo en su `develop`)?
+>    Mientras tanto la configuramos por variable.
 > 4. No se verifica que el QR sea del viaje: lo comprobamos en la prueba, un QR de otro viaje se
 >    consume y responde `200`. Sugerimos comparar el `viajeId` antes de consumirlo y responder
 >    `422` (como dice su contrato).
@@ -349,17 +373,20 @@ código falso, QR reusado y QR de otro viaje). Problemas encontrados en los otro
 
 ### Mensaje para el Grupo 10
 
-> Hola, somos el Grupo 5 (M6 – Viajes). Revisamos su repo para integrar el QR de inicio del viaje
-> (RF-8.3 y RF-6.4). Ya adaptamos M6 a su contrato: llamamos a `POST /api/v1/documents/qr/verify`
-> con exactamente `{ "token", "tripId" }` y tomamos `200 { valid: true }` como válido y
-> `400`/`404`/`410` como inválido. Si no responden en 2 s, M6 devuelve 503 y el viaje queda igual.
-> Mandamos también `Authorization: Bearer <JWT de servicio>`, `Idempotency-Key` y `X-Request-Id`.
+> Hola, somos el Grupo 5 (M6 – Viajes). Vimos que en `develop` adoptaron el contrato coordinado
+> con el G7. ¡Buenísimo! Ya adaptamos M6: llamamos a `POST /api/v1/qr/validaciones` con
+> `{ "token", "viajeId" }`, `Idempotency-Key`, `X-Request-Id` y el JWT de servicio, y tomamos `200`
+> como válido y `404`/`409`/`422` como inválido. Si no responden en 2 s, M6 devuelve 503 y el viaje
+> queda igual. Lo probamos con su `develop` levantado desde el repo: generar, validar y rechazar un
+> QR reusado anduvo perfecto (el laboratorio está en nuestro repo, en `demo/integracion-m8/`).
 >
-> Levantamos su M8 desde el repo y lo probamos junto con M6: generar, validar y rechazar un QR
-> reusado anduvo perfecto. Lo único que falló fue su imagen Docker tal como está, que no arranca:
-> a `node:20-alpine` le falta OpenSSL para Prisma (`apk add openssl`), el `USER node` no tiene
-> permiso para preparar Prisma, y no se corre `prisma migrate deploy` antes de iniciar. El
-> laboratorio está en nuestro repo, en `demo/integracion-m8/`, por si les sirve.
+> Algunas cosas que vimos:
+> 1. `parseAndAuthorizeJwt` decodifica el token pero no verifica la firma, y sin header
+>    `Authorization` deja pasar el pedido: cualquiera podría validar QR armando un token con rol
+>    `SERVICIO`. Conviene verificar la firma con la clave de M1 y exigir el token.
+> 2. Sólo aceptan el rol `SERVICIO`. M1 podría emitir `SYSTEM` (es el nombre canónico en el
+>    contrato de M6); ¿pueden aceptar los dos? Además toman sólo el primer elemento de `roles`.
+> 3. ¿Cuándo pasan `develop` a `main`? Hoy `main` todavía no tiene las rutas del contrato.
 >
 > Sobre las notificaciones: vimos que escuchan `trip.completed` en `urban_mobility_events`.
 > Nosotros publicamos en el exchange `movilidad.eventos` (topic) con las routing keys

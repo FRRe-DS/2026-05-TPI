@@ -10,6 +10,8 @@ recorre el inicio de un viaje con un QR generado por M8 (RF-6.4, RF-8.3).
 - Los repos de los grupos 7 y 10 clonados al lado de este repo, en `../otros grupos/2026-07-TPI`
   y `../otros grupos/2026-10-TPI`. Si están en otro lugar, crear un `.env` en esta carpeta con
   `G7_REPO=...` y `G10_REPO=...`.
+- El repo del Grupo 10 en su rama **`develop`** (`git checkout develop`): es la que implementa el
+  contrato coordinado con el G7. Su `main` todavía no tiene esas rutas.
 
 ## Cómo correrla
 
@@ -51,6 +53,6 @@ los problemas encontrados en los otros grupos.
   formato que usa su código, para poder probar igual su **validación**, que es la que usa M6.
   Además valida en `/api/Documentos/qr/validar` y no en la ruta de su contrato (por eso
   `M8_G7_RUTA_QR`).
-- **G10:** su imagen Docker no arranca tal como está: le falta OpenSSL para Prisma, corre con un
-  usuario sin permisos para prepararlo y no aplica las migraciones. El `docker-compose.yml` lo
-  corrige al iniciar, sin tocar su repositorio.
+- **G10:** la imagen de su `main` no arranca tal como está (OpenSSL, permisos y migraciones de
+  Prisma); en `develop` lo arreglaron. El `docker-compose.yml` arranca bien con las dos ramas, sin
+  tocar su repositorio.

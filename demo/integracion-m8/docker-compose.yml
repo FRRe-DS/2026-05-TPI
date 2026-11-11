@@ -95,9 +95,9 @@ services:
       SMTP_PORT: "1025"
       SMTP_SECURE: "false"
       SMTP_FROM: soporte@movilidadurbana.local
-    # Su imagen tal como está no arranca (avisado al G10): le falta OpenSSL para Prisma, corre con
-    # un usuario sin permiso para preparar Prisma y no aplica las migraciones. Acá se corrige al
-    # iniciar, sin tocar su repositorio.
+    # La imagen de su rama `main` no arranca tal como está (le falta OpenSSL para Prisma, corre con
+    # un usuario sin permiso para prepararlo y no aplica las migraciones); en `develop` ya lo
+    # arreglaron. Este arranque funciona con las dos ramas, sin tocar su repositorio.
     user: root
     # Su healthcheck da 10 s de arranque; con los pasos de abajo tarda más y `--wait` lo daría por caído.
     healthcheck:
