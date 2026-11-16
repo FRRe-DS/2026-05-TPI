@@ -1,3 +1,5 @@
+// Tiene que ir primero: OpenTelemetry debe cargarse antes que http, pg, etc. para poder instrumentarlos.
+import './telemetria/instrumentacion';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
