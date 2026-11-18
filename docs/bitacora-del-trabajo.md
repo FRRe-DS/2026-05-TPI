@@ -974,6 +974,64 @@ funciona como antes.
 - Con M7 apagado, `complete` respondió `200` igual y quedó el error en el log.
 - El pago y el cargo sólo se probaron con respuestas simuladas.
 
+## Paso 23 – Telemetría con OpenTelemetry (trazas, métricas y logs)
+
+Trabajado en la rama `telemetria` y unido a `main` con el PR #3 (18/11). Lo hizo el estudiante de
+5.º año que arma el dashboard de telemetría (opsboard), que necesita leer los datos de M6. El grupo
+revisó el código y lo aceptó.
+
+**Qué se hizo:**
+- **Arranque de OpenTelemetry** en `src/telemetria/instrumentacion.ts`, importado en la primera
+  línea de `main.ts` (tiene que cargarse antes que `http`, `pg`, etc. para poder engancharlos).
+- **Apagado por defecto:** sólo se activa si está `OTEL_EXPORTER_OTLP_ENDPOINT`. Sin esa variable
+  (tests, desarrollo) todo funciona igual que antes. La configuración sale de las variables
+  estándar `OTEL_*` (RNF-06), documentadas en `.env.example`.
+- **Trazas automáticas** de pedidos HTTP, Express, NestJS, PostgreSQL, Redis, RabbitMQ y las
+  llamadas por `fetch` (la validación del QR con M8). Para no llenar de ruido se ignoran los
+  `/health`, los middlewares de Express y las consultas del relevador de eventos que no nacen de un
+  pedido.
+- **Spans propios** para cada operación del ciclo de vida (`trip.create`, `trip.start`, etc.) y
+  uno aparte para la validación del QR (`m8.validarCodigo`).
+- **Tres métricas propias** (`src/telemetria/metricas.ts`, prefijo `m6_` según la convención de
+  opsboard):
+  1. `m6_trip_transitions`: transiciones, por estado de origen, de destino y rol del actor.
+  2. `m6_trip_cancellations`: cancelaciones, por rol y motivo.
+  3. `m6_transition_duration`: duración de cada operación, en segundos, con el resultado.
+
+  Las etiquetas son siempre categorías cerradas, nunca un id de viaje o de usuario, para no crear
+  una serie nueva en Prometheus por cada valor.
+- **Métricas técnicas:** CPU y memoria del proceso, event loop, GC y heap.
+- **Logs:** cada línea JSON lleva `trace_id` y `span_id` si hay una traza activa (en Grafana se
+  salta del log a la traza) y también se manda por OTLP hacia Loki. Se mantiene RNF-19: no se
+  envían tokens, cuerpos de pedidos ni coordenadas.
+
+**Cómo usarlo:** levantar el stack de `opsboard-tpi-devops/observabilidad` (`docker compose up -d`)
+y en el `.env` de M6 poner `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`,
+`OTEL_SERVICE_NAME=m6-grupo5` y `OTEL_RESOURCE_ATTRIBUTES=grupo=5`.
+
+**Cómo se probó:** CI del PR en verde (tipos, tests, contratos e imagen Docker). Ya en `main`,
+local: `npm run typecheck` sin errores; `npm test` con 74 unitarios y 63 de integración en memoria
+en verde (los 16 contra PostgreSQL, Redis y RabbitMQ reales quedan para `npm run test:infra`). No se
+probó todavía el envío real a un stack de observabilidad.
+
+**Observaciones de la revisión** (no bloqueaban el PR):
+- No hay tests propios para las métricas.
+- Las etiquetas de la métrica de duración mezclan idiomas (`action` y `resultado`).
+- Si además se recolectan los logs de la salida de Docker, en Loki podrían aparecer duplicados.
+
+## Paso 24 – Unir M7 con la telemetría y pasar todo a `main`
+
+La rama de M7 (paso 22) se había creado antes de la telemetría (paso 23) y las dos cambiaban
+`viajes.service.ts` y `.env.example`. Se unió `main` en `integracion-m7-tarifa-final` y se
+resolvieron los conflictos:
+- `.env.example`: quedan las variables de M7 y las de OpenTelemetry.
+- `viajes.service.ts`: `finalizar` y `cancelar` se miden con la telemetría (`AccionViaje.COMPLETE` y
+  `CANCEL`) y además avisan a M7. Las llamadas a M7 quedan en su propio span
+  (`m7.viajeCompletado`, `m7.cargoCancelacion`), así en Jaeger se ve cuánto tarda M7.
+
+**Cómo se probó:** `npm run typecheck` sin errores; `npm test` con 91 unitarios y 67 de integración
+en memoria, en verde. Se unió a `main` con el PR #4 (18/11).
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |
@@ -1033,7 +1091,7 @@ grupo-5-dds/
 | RNF-09 Idempotencia (TP2) | Cumplido en M6 | `Idempotency-Key` en Redis, creación por `assignmentId`, eventos con `eventId` |
 | RNF-10 Mensajería (TP2) | Cumplido | RabbitMQ + outbox, ADR-003 |
 | RNF-11 Caché y vencimiento (TP2) | Cumplido | Redis para `Idempotency-Key`, ADR-004 |
-| RNF-14 Salud y diagnóstico (TP2) | Cumplido | `/health`, `/health/details`, logs JSON con `correlationId`/`tripId` |
+| RNF-14 Salud y diagnóstico (TP2) | Cumplido | `/health`, `/health/details`, logs JSON con `correlationId`/`tripId`; trazas, métricas y logs por OpenTelemetry (paso 23) |
 | RNF-17 Automatización (TP2) | Cumplido | `.github/workflows/m6-viajes.yml`, corridas en verde en GitHub |
 | RNF-12 Seguridad (TP2-TP3) | Cumplido (falta el token real de M1) | JWT con `exp`, roles, límite de pedidos, helmet, cuerpos acotados, `npm audit` en CI, ADR-005 |
 | RNF-13 Resiliencia (TP2) | Cumplido | Timeouts con M8, RabbitMQ y Redis; eventos que esperan si el broker se cae; sin Redis se sigue operando; sobrevive a la caída de PostgreSQL |
@@ -1073,4 +1131,9 @@ grupo-5-dds/
      `tarifas:*` y `pagos:*` para `grupo-05`. Antes no se puede probar.
    - **Cuidado:** la clave del cliente `grupo-05` está en el archivo del realm del repo de la
      cátedra. No copiarla en este repo: va sólo en el `.env`, que no se sube.
+5. **Telemetría**, después del paso 23:
+   - **Probar con el stack de opsboard:** levantar M6 con `OTEL_EXPORTER_OTLP_ENDPOINT` y verificar
+     que las trazas, las métricas `m6_*` y los logs lleguen al dashboard.
+   - **Tests de las métricas:** agregar alguno que verifique `registrarTransicion` y
+     `medirOperacion`.
 
