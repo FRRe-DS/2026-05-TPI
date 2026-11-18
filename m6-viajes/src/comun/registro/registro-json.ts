@@ -1,4 +1,5 @@
 import { LoggerService, LogLevel } from '@nestjs/common';
+import { logs, SeverityNumber, trace } from '@opentelemetry/api';
 import { contextoPedido } from './contexto-pedido';
 
 /**
@@ -9,6 +10,15 @@ import { contextoPedido } from './contexto-pedido';
  *
  * Nunca se escriben tokens, cuerpos de pedidos ni coordenadas (RNF-19).
  */
+const SEVERIDAD: Record<string, SeverityNumber> = {
+  verbose: SeverityNumber.TRACE,
+  debug: SeverityNumber.DEBUG,
+  info: SeverityNumber.INFO,
+  warn: SeverityNumber.WARN,
+  error: SeverityNumber.ERROR,
+  fatal: SeverityNumber.FATAL,
+};
+
 export class RegistroJson implements LoggerService {
   constructor(private readonly escribir: (linea: string) => void = (linea) => process.stdout.write(linea + '\n')) {}
 
@@ -47,16 +57,33 @@ export class RegistroJson implements LoggerService {
     // Se puede loguear un texto o un objeto con campos: logger.log({ mensaje: '...', estado: 201 }).
     const esObjeto = typeof message === 'object' && message !== null && !(message instanceof Error);
     const { message: texto, ...campos } = esObjeto ? (message as Record<string, unknown>) : { message };
-    this.escribir(
-      JSON.stringify({
-        momento: new Date().toISOString(),
-        nivel,
-        ...(contexto && { contexto }),
-        message: String(texto ?? ''),
-        ...contextoPedido.actual(),
-        ...campos,
-        ...extra,
-      }),
-    );
+    // Si hay una traza activa, la línea lleva su id: en Grafana se salta del log a la traza y viceversa.
+    const span = trace.getActiveSpan()?.spanContext();
+    const linea = {
+      momento: new Date().toISOString(),
+      nivel,
+      ...(contexto && { contexto }),
+      message: String(texto ?? ''),
+      ...contextoPedido.actual(),
+      ...campos,
+      ...extra,
+      ...(span && { trace_id: span.traceId, span_id: span.spanId }),
+    };
+    this.escribir(JSON.stringify(linea));
+    this.enviarAOpenTelemetry(nivel, linea);
+  }
+
+  /** Envía la línea también por OpenTelemetry (hacia Loki). Sin OpenTelemetry activo no hace nada. */
+  private enviarAOpenTelemetry(nivel: string, linea: Record<string, unknown>): void {
+    const { message, momento: _momento, nivel: _nivel, stack: _stack, ...resto } = linea;
+    const atributos = Object.fromEntries(
+      Object.entries(resto).filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v)),
+    ) as Record<string, string | number | boolean>;
+    logs.getLogger('m6-viajes').emit({
+      severityNumber: SEVERIDAD[nivel] ?? SeverityNumber.INFO,
+      severityText: nivel.toUpperCase(),
+      body: String(message),
+      attributes: { ...atributos, ...(typeof linea.stack === 'string' && { 'exception.stacktrace': linea.stack }) },
+    });
   }
 }
