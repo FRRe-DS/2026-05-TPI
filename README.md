@@ -114,6 +114,7 @@ m6-viajes/
 │   ├── main.ts / app.module.ts        # arranque y armado de NestJS
 │   ├── configuracion.ts               # validación de variables de entorno
 │   ├── salud/                         # GET /health, /health/details y redirección de / a /docs
+│   ├── telemetria/                    # OpenTelemetry: arranque, métricas m6_* y spans
 │   ├── comun/                         # lo transversal a toda la API
 │   │   ├── autenticacion.guard.ts     # verifica el JWT y obtiene id y rol
 │   │   ├── correlacion.middleware.ts  # X-Correlation-Id
@@ -127,7 +128,7 @@ m6-viajes/
 │   └── viajes/
 │       ├── dominio/                   # reglas de negocio puras (sin NestJS)
 │       ├── aplicacion/                # casos de uso (ViajesService), puertos, eventos
-│       ├── infraestructura/           # implementaciones: repositorios, eventos al log, QR
+│       ├── infraestructura/           # implementaciones: repositorios, eventos al log, QR (M8), cobro (M7)
 │       │   ├── postgres/              # repositorio y bandeja de salida en PostgreSQL, migraciones
 │       │   └── publicador-eventos.rabbitmq.ts  # publicación en RabbitMQ
 │       ├── http/                      # controlador, DTOs y formato de respuestas
@@ -158,6 +159,29 @@ el `RelevadorDeEventos` publica en RabbitMQ los eventos guardados en la bandeja 
   npm run docker:logs | grep '"tripId":"<id>"'
   ```
   Con `LOG_FORMATO=texto` (el de `.env.example`) los logs son más legibles durante el desarrollo.
+
+### Telemetría (OpenTelemetry)
+
+Viene **apagada por defecto**. Se activa definiendo `OTEL_EXPORTER_OTLP_ENDPOINT`, y entonces M6
+envía por OTLP:
+
+- **Trazas** de cada pedido: HTTP, NestJS, PostgreSQL, Redis, RabbitMQ y las llamadas a M8 y M7, con
+  un span por operación del viaje (`trip.create`, `trip.start`, etc.).
+- **Métricas propias:** `m6_trip_transitions` (por estado de origen, de destino y rol),
+  `m6_trip_cancellations` (por rol y motivo) y `m6_transition_duration` (duración de cada
+  operación). También CPU, memoria, event loop y GC.
+- **Logs**, que además llevan `trace_id` y `span_id` para saltar del log a la traza en Grafana.
+
+Para verla en el dashboard, levantar el stack de `opsboard-tpi-devops/observabilidad`
+(`docker compose up -d`) y en el `.env` poner:
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=m6-grupo5
+OTEL_RESOURCE_ATTRIBUTES=grupo=5
+```
+
+El detalle está en el paso 23 de `docs/bitacora-del-trabajo.md`.
 
 ### Seguridad
 
@@ -193,6 +217,9 @@ el `RelevadorDeEventos` publica en RabbitMQ los eventos guardados en la bandeja 
 | `M8_G10_URL`, `M8_G10_RUTA_QR`, `M8_G10_TOKEN` | Lo mismo para el M8 del Grupo 10 (contrato coordinado con el G7) | —, `/api/v1/qr/validaciones`, — |
 | `REGISTRO_TARIFA` | `ninguno` o `m7`: avisa a M7 la tarifa final y el pago al completar, y el cargo al cancelar (regla R6-05) | `ninguno` |
 | `M7_URL`, `M7_TOKEN`, `M7_TIMEOUT_MS` | URL de **un** M7 (Grupo 6 u 11), JWT de servicio y timeout en ms, si `REGISTRO_TARIFA=m7` | —, —, `2000` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Destino OTLP de la telemetría; sin esta variable la telemetría queda apagada | — |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | Nombre del servicio y atributos con los que aparece en el dashboard | —, — |
+| `OTEL_METRIC_EXPORT_INTERVAL` | Cada cuántos ms se envían las métricas | `5000` |
 
 ## Estado
 
@@ -209,3 +236,6 @@ el `RelevadorDeEventos` publica en RabbitMQ los eventos guardados en la bandeja 
 - [x] CI en GitHub Actions
 - [x] Salud y diagnóstico: `/health/details` por dependencia y logs JSON con correlación
 - [x] Seguridad web: headers, límite de pedidos, tokens con vencimiento, cuerpos acotados y auditoría de dependencias
+- [x] Validación del QR con los dos M8 (Grupos 7 y 10)
+- [x] Cobro en M7: tarifa final, pago y cargo de cancelación (falta que el Grupo 6 confirme las decisiones y tenga las rutas de pagos)
+- [x] Telemetría con OpenTelemetry: trazas, métricas `m6_*` y logs (falta probarla contra el dashboard de opsboard)
