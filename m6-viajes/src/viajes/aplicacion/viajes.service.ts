@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { conSpan, medirOperacion, registrarTransicion } from '../../telemetria/metricas';
 import { correspondeCargoCancelacion } from '../dominio/cargo-cancelacion';
 import { DatosInvalidosError } from '../dominio/errores';
-import { Actor, Rol, TransicionViaje } from '../dominio/tipos';
+import { AccionViaje, Actor, Rol, TransicionViaje } from '../dominio/tipos';
 import {
   ConfiguracionViaje,
   DatosFinalizacion,
@@ -60,7 +61,11 @@ export class ViajesService {
    * Crea el viaje de una solicitud. Idempotente por requestId, como en el Grupo 12: si ya existe un viaje
    * con esos mismos datos se devuelve (`creado: false`); si el requestId existe con datos distintos, 409.
    */
-  async crear(datos: Omit<DatosNuevoViaje, 'id'>, ctx: Contexto): Promise<{ viaje: Viaje; creado: boolean }> {
+  crear(datos: Omit<DatosNuevoViaje, 'id'>, ctx: Contexto): Promise<{ viaje: Viaje; creado: boolean }> {
+    return medirOperacion(AccionViaje.CREATE, undefined, () => this.crearViaje(datos, ctx));
+  }
+
+  private async crearViaje(datos: Omit<DatosNuevoViaje, 'id'>, ctx: Contexto): Promise<{ viaje: Viaje; creado: boolean }> {
     const existente = await this.repositorio.buscarPorSolicitud(datos.requestId);
     if (existente) {
       return { viaje: this.mismosDatos(existente, datos), creado: false };
@@ -69,6 +74,7 @@ export class ViajesService {
     const nuevo = Viaje.crear({ ...datos, id: randomUUID() }, ctx.actor, this.reloj.ahora());
     const guardado = await this.repositorio.insertar(nuevo, [eventoDeUltimaTransicion(nuevo, ctx.correlationId)]);
     // Si otro pedido con el mismo requestId lo guardó primero, se devuelve ese (y no hay evento nuevo).
+    if (guardado === nuevo) registrarTransicion(guardado.history[guardado.history.length - 1]);
     return guardado === nuevo
       ? { viaje: guardado, creado: true }
       : { viaje: this.mismosDatos(guardado, datos), creado: false };
@@ -110,15 +116,17 @@ export class ViajesService {
   }
 
   registrarArribo(tripId: string, versionEsperada: VersionEsperada, ctx: Contexto): Promise<Viaje> {
-    return this.ejecutar(tripId, versionEsperada, ctx, (viaje, ahora) => viaje.registrarArribo(ctx.actor, ahora));
+    return this.ejecutar(AccionViaje.REGISTER_ARRIVAL, tripId, versionEsperada, ctx, (viaje, ahora) => viaje.registrarArribo(ctx.actor, ahora));
   }
 
   iniciar(tripId: string, code: string, versionEsperada: VersionEsperada, ctx: Contexto): Promise<Viaje> {
-    return this.ejecutar(tripId, versionEsperada, ctx, async (viaje, ahora) => {
+    return this.ejecutar(AccionViaje.START, tripId, versionEsperada, ctx, async (viaje, ahora) => {
       // Primero se prueba la transición sobre una copia: si no es válida, no se gasta el QR.
       Viaje.reconstituir(viaje.toProps()).iniciar(ctx.actor, ahora);
 
-      const resultado = await this.validadorCodigo.validarYConsumir(viaje.id, code, ctx.correlationId);
+      const resultado = await conSpan('m8.validarCodigo', () =>
+        this.validadorCodigo.validarYConsumir(viaje.id, code, ctx.correlationId),
+      );
       if (resultado !== 'VALIDO') {
         throw new CodigoVerificacionInvalidoError();
       }
@@ -128,8 +136,8 @@ export class ViajesService {
 
   /** Completa el viaje y, ya guardado, le pide a M7 la tarifa final y el pago. */
   async finalizar(tripId: string, datos: DatosFinalizacion, versionEsperada: VersionEsperada, ctx: Contexto): Promise<Viaje> {
-    const viaje = await this.ejecutar(tripId, versionEsperada, ctx, (v, ahora) => v.finalizar(ctx.actor, datos, ahora));
-    await this.registradorCobro.viajeCompletado(viaje, ctx.correlationId);
+    const viaje = await this.ejecutar(AccionViaje.COMPLETE, tripId, versionEsperada, ctx, (v, ahora) => v.finalizar(ctx.actor, datos, ahora));
+    await conSpan('m7.viajeCompletado', () => this.registradorCobro.viajeCompletado(viaje, ctx.correlationId));
     return viaje;
   }
 
@@ -140,11 +148,11 @@ export class ViajesService {
     versionEsperada: VersionEsperada,
     ctx: Contexto,
   ): Promise<Viaje> {
-    const viaje = await this.ejecutar(tripId, versionEsperada, ctx, (v, ahora) =>
+    const viaje = await this.ejecutar(AccionViaje.CANCEL, tripId, versionEsperada, ctx, (v, ahora) =>
       v.cancelar(ctx.actor, solicitud, ahora, this.config),
     );
     if (correspondeCargoCancelacion(viaje.toProps().cancellation)) {
-      await this.registradorCobro.cargoCancelacion(viaje, ctx.correlationId);
+      await conSpan('m7.cargoCancelacion', () => this.registradorCobro.cargoCancelacion(viaje, ctx.correlationId));
     }
     return viaje;
   }
@@ -153,7 +161,22 @@ export class ViajesService {
    * Esqueleto común de todas las transiciones:
    * leer → verificar If-Match → aplicar la acción → guardar viaje y evento juntos, con control de versión.
    */
-  private async ejecutar(
+  private ejecutar(
+    operacion: AccionViaje,
+    tripId: string,
+    versionEsperada: VersionEsperada,
+    ctx: Contexto,
+    action: (viaje: Viaje, ahora: Date) => void | Promise<void>,
+  ): Promise<Viaje> {
+    // Cada operación queda en un span propio y su duración se mide (telemetría, ver telemetria/metricas.ts).
+    return medirOperacion(operacion, tripId, async () => {
+      const viaje = await this.aplicarTransicion(tripId, versionEsperada, ctx, action);
+      registrarTransicion(viaje.history[viaje.history.length - 1]);
+      return viaje;
+    });
+  }
+
+  private async aplicarTransicion(
     tripId: string,
     versionEsperada: VersionEsperada,
     ctx: Contexto,
