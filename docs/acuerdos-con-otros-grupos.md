@@ -24,7 +24,7 @@ Cuando se cierra un acuerdo:
 | M8 Notificaciones | 7 y 10 | Generación y validación del QR, eventos | Alta | Repos revisados; M6 adaptado a ambos; mensajes listos para enviar |
 | Cátedra | — | Quién hace M1, formato del token y aprobación del stack (RNF-01) | Alta | Sin enviar |
 | M6 (otra impl.) | 12 | Unificar el contrato de M6 (guía paso a paso de qué cambia cada uno) | Alta | Sin enviar |
-| M7 Pagos | 6 y 11 | Datos para cobro y cargo de cancelación | Media | Sin enviar |
+| M7 Pagos | 6 y 11 | Datos para cobro y cargo de cancelación | Media | M6 registra tarifa final, pago y cargo; documento para el G6 (`docs/para-grupo-6-integracion-m7.md`) con 3 decisiones para confirmar |
 | M4 Ubicación | 3 y 14 | Liberar al conductor al terminar o cancelar | Media | Sin enviar |
 | M2 Clientes | 1 y 17 | Historial de viajes y calificación | Baja | Sin enviar |
 | M3 Conductores | 2 y 15 | Calificación del cliente | Baja | Sin enviar |
@@ -634,6 +634,49 @@ D. **`durationMinutes` en `POST /trips/{id}/complete`.** Podemos aceptarlo e ign
 ---
 
 ## M7 – Tarifas, Pagos y Liquidaciones (Grupos 6 y 11)
+
+### Estado actual (11/11): contrato común de M7 revisado
+
+Los Grupos 6 y 11 publicaron un contrato común en el repo de la cátedra
+(`FRRe-DS/2026-TPI`, `contratos/m7_tarifas/openapi.yml`). **Cambia nuestra propuesta:** M7 no
+escucha los eventos de M6 para cobrar; espera que **M6 lo llame por REST**. M6 ya hace las tres
+llamadas (`REGISTRO_TARIFA=m7`, código en `m6-viajes/src/viajes/infraestructura/registrador-cobro.m7.ts`):
+
+| Cuándo | Llamada a M7 | Estado |
+|---|---|---|
+| Al completar el viaje | `POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final` con `tipo_vehiculo` (`auto`/`moto`), `distancia_real_km` y `duracion_real_min` | Hecho y probado contra el M7 del Grupo 6 (`201`) |
+| Después de la tarifa final | `POST /api/v1/pagos` con `viaje_id`, `reserva_id` (si hay), `cliente_id`, `beneficiario_id` (el conductor) y `monto` = `desglose.total`. `Idempotency-Key: m6-pago-<viaje_id>` | Hecho en M6. El Grupo 6 todavía no tiene la ruta (`404`) |
+| Al cancelar con cargo (regla R6-05) | `POST /api/v1/cargos-cancelacion` con `viaje_id`, `reserva_id` (si hay), `cliente_id`, `tipo_vehiculo` y `motivo`. `Idempotency-Key: m6-cargo-<viaje_id>` | Hecho en M6. El Grupo 6 todavía no tiene la ruta |
+
+Cómo funciona del lado de M6:
+- Se llama a **un solo M7** (`M7_URL`). Registrar en los dos duplicaría el cobro.
+- Se llama después de guardar el viaje. Si M7 no responde o da error, el viaje igual queda
+  `COMPLETED` o `CANCELLED` y el error queda en el log. `200` y `409` (ya registrado) no son error.
+- Si la tarifa final ya estaba (`409`), se lee con `GET` para saber el total del pago. Si la tarifa
+  falla, no se manda el pago.
+- No cambia la API de M6 ni sus eventos: `contratos/openapi.yaml` sigue igual al del Grupo 12. Por
+  eso quedan sin actualizar dos frases de sus descripciones que dicen que M7 cobra o calcula el
+  cargo a partir de los eventos.
+
+Decisiones que tomamos y le pedimos al Grupo 6 que confirme (detalle en
+`docs/para-grupo-6-integracion-m7.md`):
+- **A. Medio de pago:** M6 **no manda `metodo`**. Proponemos que M7 lo resuelva con el medio que
+  eligió el cliente (RF-7.2 es de M7) y que `metodo` pase a ser opcional en su contrato. **Mientras
+  no lo cambien, un M7 que cumpla el contrato actual va a rechazar el pago y el cargo.**
+- **B. Cargo de cancelación:** regla R6-05 de `docs/m6/maquina-de-estados.md`.
+- **C. Orden:** primero la tarifa final y después el pago, por su total.
+
+Otros pendientes:
+- **Permisos:** el realm `ds-2026-realm` todavía no tiene los scopes `tarifas:write` ni
+  `pagos:write` para el cliente `grupo-05`, y el M7 del Grupo 6 todavía no valida tokens.
+- **Grupo 11:** su código todavía usa otras rutas (`/pagos/autorizar`, `/tarifas/estimar`), no
+  las del contrato común.
+
+**Mensaje:** enviar `docs/para-grupo-6-integracion-m7.md` (el mismo sirve para el Grupo 11).
+
+### Propuesta original (antes del contrato común)
+
+> **Reemplazada:** no mandar el mensaje de abajo; usar el de "Estado actual". Se deja como registro.
 
 **Qué necesitamos:** M7 cobra cuando el viaje termina y decide si corresponde un cargo cuando se
 cancela. M6 **no calcula importes**: sólo publica los datos.
