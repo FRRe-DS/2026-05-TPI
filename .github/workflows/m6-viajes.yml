@@ -74,10 +74,10 @@ jobs:
 
     steps:
       - name: Descargar el código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Instalar Node.js (versión de .nvmrc)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: m6-viajes/.nvmrc
           cache: npm
@@ -95,15 +95,60 @@ jobs:
       - name: Validar contratos (OpenAPI y AsyncAPI)
         run: npm run contratos:validar
 
-      - name: Tests unitarios y de integración (en memoria)
-        run: npm test
+      - name: Tests unitarios
+        run: |
+          mkdir -p reports
+          npm exec -- jest --json --outputFile=reports/unitarios.json
+
+      - name: Tests de integración (en memoria)
+        run: npm run test:e2e -- --json --outputFile=reports/integracion-memoria.json
 
       - name: Tests de integración contra PostgreSQL, RabbitMQ y Redis
-        run: npm run test:infra
+        run: npm run test:infra -- --json --outputFile=reports/integracion-infra.json
         env:
           TEST_BASE_DATOS_URL: postgres://m6:m6@localhost:5432/m6_viajes_test
           TEST_RABBITMQ_URL: amqp://m6:m6@localhost:5672
           TEST_REDIS_URL: redis://localhost:6379
+
+      - name: Guardar reportes JSON de Jest
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: g05-jest-reports
+          path: m6-viajes/reports/*.json
+          if-no-files-found: warn
+
+  sast:
+    name: Análisis estático SAST (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Los hallazgos quedan en el informe. Los errores del escáner sí fallan el job.
+      - name: Ejecutar Semgrep
+        run: |
+          mkdir -p reports
+          docker run --rm -v "${{ github.workspace }}:/src" semgrep/semgrep:1.184.0 \
+            semgrep scan --metrics=off \
+            --config p/typescript --config p/nodejs \
+            --config p/owasp-top-ten --config p/secrets \
+            --sarif --output /src/reports/semgrep-g05.sarif \
+            /src/m6-viajes/src
+
+      - name: Guardar reporte SARIF
+        uses: actions/upload-artifact@v6
+        with:
+          name: g05-semgrep-sarif
+          path: reports/semgrep-g05.sarif
+          if-no-files-found: error
 
   imagen:
     name: Imagen Docker
@@ -115,7 +160,7 @@ jobs:
       packages: write
     steps:
       - name: Descargar el código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Construir la imagen
         working-directory: .
