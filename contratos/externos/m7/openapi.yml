@@ -1,0 +1,2001 @@
+openapi: 3.1.0
+info:
+  title: DS 2026 API
+  description: |
+    API de Tarifas, Pagos y Liquidaciones (M7). Estimación y cálculo de
+    tarifas, cobro de viajes, cargo por cancelación, reembolsos, historial
+    financiero y liquidación a los beneficiarios (el conductor o el dueño del
+    vehículo).
+
+    Contrato común de M7, acordado entre el Grupo 6 y el Grupo 11. Sigue el
+    diseño y los nombres del código del Grupo 11, más lo que piden el
+    enunciado (RF y RNF) y la filmina DS-04.
+
+    Convenciones:
+    - Autenticación: `Authorization: Bearer <JWT>` emitido por M1 (Keycloak,
+      realm `ds-2026-realm`). Cada operación declara en `security` el permiso
+      (scope) que necesita: `tarifas:read`, `tarifas:write`, `pagos:read`,
+      `pagos:write`, `liquidaciones:read` o `liquidaciones:write`.
+      `GET /health` y el aviso de la pasarela no usan token.
+    - Si el token es de una persona, M7 también mira su rol (RF-1.3): un
+      CLIENTE solo ve sus propios pagos y un CONDUCTOR solo sus liquidaciones
+      y su saldo; si no, `403`. El `sub` de ese token es el `cliente_id` o el
+      `beneficiario_id` de la persona.
+    - Correlación: toda solicitud puede traer `X-Request-Id` (1 a 128
+      caracteres: letras, números, `.`, `_`, `-`). Toda respuesta, también las
+      de error, lo devuelve; si la solicitud no lo trae, o trae uno inválido,
+      M7 genera uno nuevo (nunca responde `400` por este encabezado).
+    - Errores: `application/problem+json` (RFC 9457) con el esquema `Problema`.
+      Los genéricos (`400`, `401`, `403`, `404`, `405`, `413`, `415`, `500`,
+      `503` de la base) usan `type: about:blank` y un `title` en español; los
+      de dominio (`409`, `422`, `503` de la pasarela) tienen su propio `type`.
+      Un método no definido para una ruta existente responde `405` con el
+      encabezado `Allow`.
+    - Cuerpos: solo `application/json` (otro `Content-Type`, `415`) y hasta
+      1 MiB (más grande, `413`).
+    - Campos en `snake_case` y valores fijos en minúsculas (`aprobado`,
+      `efectivo`), como en el código del Grupo 11.
+    - Listas paginadas con `page` (desde 0) y `size` (por defecto 20, máximo
+      100), como pide la filmina DS-04.
+    - Los POST que cobran o reembolsan dinero (pago, cargo por cancelación y
+      reembolso) exigen `Idempotency-Key` (RF-7.6): la misma clave con el
+      mismo cuerpo devuelve el resultado original con `200`, sin cobrar ni
+      reembolsar de nuevo; con otro cuerpo, `422`; si la primera solicitud
+      todavía se está procesando, `409` (RNF-08).
+    - Importes en pesos argentinos (`moneda: ARS`) con hasta dos decimales,
+      redondeados al centavo. En JSON el separador decimal es el punto
+      (`4850.5`); el formato argentino (`$ 4.850,50`) es para mostrárselo a
+      las personas.
+    - Los importes los calcula M7 con sus reglas y no acepta totales ajenos
+      (filmina DS-04): el pago de un viaje tiene que ser por el total de su
+      tarifa final. La distancia y el tiempo los informa quien llama: M5 y M9
+      los obtienen de M4 para estimar (RF-4.6) y M6 informa los reales al
+      terminar el viaje (RF-6.5).
+    - Si la pasarela de pago no responde a tiempo, M7 contesta `503` con
+      `Retry-After` y nunca queda esperando.
+
+    Recorrido de un viaje:
+    1. Antes de confirmar un viaje o una reserva, M5 o M9 piden una estimación
+       (`POST /api/v1/tarifas/estimaciones`) para mostrarle el precio al
+       cliente. La estimación no se guarda.
+    2. Cuando el viaje termina, M6 registra la tarifa final con la distancia y
+       el tiempo reales (`POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final`)
+       y después registra el pago por ese total (`POST /api/v1/pagos`).
+    3. En efectivo, el pago queda `aprobado` en el acto. Con tarjeta o
+       billetera virtual queda `pendiente` hasta que la pasarela avisa si lo
+       aprobó o lo rechazó (`POST /api/v1/pagos/webhooks/pasarela`). Así se
+       simulan la autorización y la captura (RF-7.3).
+    4. Si un viaje o una reserva se cancela y sus reglas indican que lleva
+       cargo, M6 o M9 lo registran (`POST /api/v1/cargos-cancelacion`). El
+       cargo se cobra con tarjeta o billetera virtual.
+    5. Un operador genera la liquidación de cada beneficiario por período
+       (`POST /api/v1/liquidaciones`). Lo que el conductor ya cobró en
+       efectivo se descuenta de lo que se le transfiere.
+
+    Eventos que M7 propone para el catálogo común (RNF-03; la mensajería con
+    RabbitMQ llega en TP2): pago aprobado, pago rechazado, reembolso
+    registrado, cargo por cancelación registrado y liquidación generada. Sus
+    nombres y su formato los define el catálogo común.
+  version: 1.0.0
+servers:
+  - url: /
+    description: Relativa al host donde se despliegue (en local, puerto 8000).
+security:
+  - oauth2: []
+tags:
+  - name: Salud
+    description: Disponibilidad del servicio.
+  - name: Tarifas
+    description: Estimaciones, tarifa final y reglas de tarifa (RF-7.1).
+  - name: Pagos
+    description: Cobro de viajes y aviso de la pasarela (RF-7.2, RF-7.3 y RF-7.6).
+  - name: Cancelaciones
+    description: Cargo fijo por cancelación (RF-7.4).
+  - name: Reembolsos
+    description: Reembolsos (reintegros) totales o parciales (RF-7.5).
+  - name: Historial
+    description: Movimientos de cada pago (RF-7.7).
+  - name: Liquidaciones
+    description: Liquidación y saldo de los beneficiarios (RF-7.8).
+
+paths:
+  /health:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    get:
+      tags: [Salud]
+      operationId: verificarSalud
+      summary: Verificar que el servicio responde
+      description: |
+        No exige token. Responde `200` si el servicio y su base están
+        disponibles; si no, `503`.
+      security: []
+      responses:
+        '200':
+          description: El servicio responde.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Salud'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/tarifas/estimaciones:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    post:
+      tags: [Tarifas]
+      operationId: estimarTarifa
+      summary: Estimar la tarifa de un viaje
+      description: |
+        Calcula el precio de un viaje antes de confirmarlo, con la regla activa
+        del tipo de vehículo (RF-7.1). La usan M5 y M9 (RF-9.4) con la
+        distancia y el tiempo que obtienen de M4 (RF-4.6). No se guarda: lo
+        que se cobra sale de la tarifa final. Si no hay una regla activa para
+        el tipo de vehículo, `422`.
+      security:
+        - oauth2: ['tarifas:read']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstimacionNueva'
+            examples:
+              auto:
+                summary: Viaje en auto de 8,2 km y 18 minutos
+                value:
+                  tipo_vehiculo: auto
+                  distancia_km: 8.2
+                  duracion_estimada_min: 18
+      responses:
+        '200':
+          description: Precio estimado.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Estimacion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '422':
+          $ref: '#/components/responses/NoProcesable'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/tarifas/viajes/{viaje_id}/tarifa-final:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/ViajeId'
+    post:
+      tags: [Tarifas]
+      operationId: calcularTarifaFinal
+      summary: Calcular y registrar la tarifa final de un viaje terminado
+      description: |
+        M6 la registra cuando el viaje termina, con la distancia y el tiempo
+        reales (RF-6.5). M7 calcula el total con la regla activa del tipo de
+        vehículo. Hay una sola tarifa final por viaje: un segundo intento
+        devuelve `409`. Si no hay una regla activa, `422`.
+      security:
+        - oauth2: ['tarifas:write']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TarifaFinalNueva'
+      responses:
+        '201':
+          description: Tarifa final calculada y registrada.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TarifaFinal'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '422':
+          $ref: '#/components/responses/NoProcesable'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+    get:
+      tags: [Tarifas]
+      operationId: obtenerTarifaFinal
+      summary: Consultar la tarifa final de un viaje
+      description: Si el viaje todavía no tiene tarifa final, `404`.
+      security:
+        - oauth2: ['tarifas:read']
+      responses:
+        '200':
+          description: Tarifa final del viaje.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TarifaFinal'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/tarifas/reglas:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    get:
+      tags: [Tarifas]
+      operationId: listarReglas
+      summary: Listar las reglas de tarifa
+      security:
+        - oauth2: ['tarifas:read']
+      parameters:
+        - name: tipo_vehiculo
+          in: query
+          required: false
+          description: Filtra por tipo de vehículo.
+          schema:
+            $ref: '#/components/schemas/TipoVehiculo'
+        - name: solo_activas
+          in: query
+          required: false
+          description: Si es `true`, devuelve solo las reglas activas.
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de reglas.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaReglas'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+    post:
+      tags: [Tarifas]
+      operationId: crearRegla
+      summary: Crear una regla de tarifa
+      description: |
+        Los parámetros configurables de RF-7.1, que administra un operador.
+        Si la regla nueva es activa, M7 desactiva la regla activa del mismo
+        tipo de vehículo: hay como máximo una activa por tipo.
+      security:
+        - oauth2: ['tarifas:write']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReglaTarifaNueva'
+      responses:
+        '201':
+          description: Regla creada.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReglaTarifa'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/tarifas/reglas/{regla_id}:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/ReglaId'
+    get:
+      tags: [Tarifas]
+      operationId: obtenerRegla
+      summary: Consultar una regla de tarifa
+      security:
+        - oauth2: ['tarifas:read']
+      responses:
+        '200':
+          description: Regla de tarifa.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReglaTarifa'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+    patch:
+      tags: [Tarifas]
+      operationId: actualizarRegla
+      summary: Modificar una regla de tarifa
+      description: |
+        Actualiza solo los campos enviados. Si la regla pasa a activa, M7
+        desactiva la otra regla activa del mismo tipo de vehículo.
+      security:
+        - oauth2: ['tarifas:write']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReglaTarifaCambios'
+      responses:
+        '200':
+          description: Regla actualizada.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReglaTarifa'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/pagos:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    post:
+      tags: [Pagos]
+      operationId: crearPago
+      summary: Registrar el pago de un viaje
+      description: |
+        M6 lo registra cuando el viaje termina, por el total de la tarifa final
+        (`GET /api/v1/tarifas/viajes/{viaje_id}/tarifa-final`), con el medio de
+        pago que eligió el cliente (RF-7.2). M7 controla que `monto` sea ese
+        total: si el viaje no tiene tarifa final o el monto no coincide, `422`
+        (filmina DS-04: el servidor no confía en totales ajenos). Con efectivo
+        el pago queda `aprobado` en el acto. Con tarjeta o billetera virtual,
+        M7 se lo pide a la pasarela y queda `pendiente` hasta su aviso, que lo
+        deja `aprobado` o `rechazado` (RF-7.3). Un rechazo también queda registrado (RF-7.7).
+        Un viaje tiene como máximo un pago de concepto `viaje` que no esté
+        `rechazado`: otro pedido con otra `Idempotency-Key` devuelve `409`
+        (RNF-08).
+      security:
+        - oauth2: ['pagos:write']
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PagoNuevo'
+      responses:
+        '201':
+          description: Pago registrado.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pago'
+        '200':
+          description: |
+            La `Idempotency-Key` ya se había usado con el mismo cuerpo: devuelve
+            el pago original, sin cobrar de nuevo.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pago'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '422':
+          $ref: '#/components/responses/NoProcesable'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/DependenciaNoDisponible'
+    get:
+      tags: [Pagos]
+      operationId: listarPagos
+      summary: Listar pagos
+      description: |
+        Con un token de CLIENTE, M7 devuelve solo sus pagos; si pide los de
+        otro `cliente_id`, `403`.
+      security:
+        - oauth2: ['pagos:read']
+      parameters:
+        - name: viaje_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: cliente_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: beneficiario_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoPago'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de pagos.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaPagos'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/pagos/{pago_id}:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/PagoId'
+    get:
+      tags: [Pagos]
+      operationId: obtenerPago
+      summary: Consultar un pago
+      description: Un CLIENTE solo puede consultar sus propios pagos; si no, `403`.
+      security:
+        - oauth2: ['pagos:read']
+      responses:
+        '200':
+          description: Pago.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pago'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/pagos/{pago_id}/movimientos:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/PagoId'
+    get:
+      tags: [Historial]
+      operationId: listarMovimientos
+      summary: Historial de un pago
+      description: |
+        Historial no destructivo del pago (RF-7.7): su registro, su aprobación
+        o su rechazo y cada reembolso, con fecha, importe y quién lo hizo. Los
+        movimientos no se modifican ni se borran. Un CLIENTE solo ve los de sus
+        propios pagos.
+      security:
+        - oauth2: ['pagos:read']
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de movimientos, del más antiguo al más nuevo.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaMovimientos'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/pagos/{pago_id}/reembolsos:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/PagoId'
+    post:
+      tags: [Reembolsos]
+      operationId: reembolsarPago
+      summary: Reembolsar todo o parte de un pago
+      description: |
+        Reembolso total o parcial de un pago `aprobado` o `reembolsado_parcial`
+        (RF-7.5), por ejemplo por una reserva cancelada; si el pago está en
+        otro estado, `409`. Sin `monto`, se reembolsa todo lo que queda. Si el
+        monto supera lo que queda por reembolsar, `422`.
+      security:
+        - oauth2: ['pagos:write']
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReembolsoNuevo'
+      responses:
+        '201':
+          description: Reembolso registrado.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reembolso'
+        '200':
+          description: |
+            La `Idempotency-Key` ya se había usado con el mismo cuerpo: devuelve
+            el reembolso original, sin reembolsar de nuevo.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reembolso'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '422':
+          $ref: '#/components/responses/NoProcesable'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+    get:
+      tags: [Reembolsos]
+      operationId: listarReembolsos
+      summary: Listar los reembolsos de un pago
+      description: Un CLIENTE solo ve los de sus propios pagos.
+      security:
+        - oauth2: ['pagos:read']
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de reembolsos.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaReembolsos'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/pagos/webhooks/pasarela:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    post:
+      tags: [Pagos]
+      operationId: webhookPasarela
+      summary: Recibir el resultado que informa la pasarela
+      description: |
+        La pasarela de pago (real o simulada) informa el resultado de un pago
+        `pendiente`. No usa token: se autentica con el secreto compartido en
+        `X-Webhook-Secret`, que se configura fuera del repositorio (RNF-06).
+        Un secreto que falta o no coincide recibe `401`. Si el pago ya no está
+        `pendiente` (las pasarelas reintentan los avisos), no cambia nada y lo
+        devuelve como está.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XWebhookSecret'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvisoPasarela'
+      responses:
+        '200':
+          description: Aviso procesado.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pago'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/cargos-cancelacion:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    post:
+      tags: [Cancelaciones]
+      operationId: registrarCargoCancelacion
+      summary: Registrar el cargo fijo por una cancelación
+      description: |
+        M6 o M9 lo llaman cuando, según sus reglas, una cancelación lleva cargo
+        (RF-6.6, RF-9.7). M7 calcula el importe: es el monto fijo
+        `cargo_cancelacion` de la regla activa del tipo de vehículo (RF-7.4).
+        Lo registra como un pago de concepto `cargo_cancelacion` y se lo pide a
+        la pasarela: queda `pendiente` hasta su aviso, como un pago con tarjeta
+        o billetera virtual. No se acepta efectivo: el cargo es para la
+        plataforma y en efectivo lo cobraría el conductor. Hay
+        como máximo un cargo que no esté `rechazado` por viaje o reserva: otro
+        pedido con otra `Idempotency-Key` devuelve `409`. Si no hay una regla
+        activa o su `cargo_cancelacion` es 0, `422`. El cargo queda para la
+        plataforma: no se liquida.
+      security:
+        - oauth2: ['pagos:write']
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CargoCancelacionNuevo'
+      responses:
+        '201':
+          description: Cargo registrado como pago.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pago'
+        '200':
+          description: |
+            La `Idempotency-Key` ya se había usado con el mismo cuerpo: devuelve
+            el cargo original, sin cobrar de nuevo.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pago'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '422':
+          $ref: '#/components/responses/NoProcesable'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/DependenciaNoDisponible'
+
+  /api/v1/liquidaciones:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+    post:
+      tags: [Liquidaciones]
+      operationId: generarLiquidacion
+      summary: Generar la liquidación de un beneficiario
+      description: |
+        Agrupa los pagos de concepto `viaje` del beneficiario que están
+        `aprobado` o `reembolsado_parcial`, se crearon dentro del período y
+        todavía no están en una liquidación (RF-7.8):
+        - `monto_bruto`: lo cobrado en esos pagos, sin lo reembolsado.
+        - `comision_plataforma`: un porcentaje de `monto_bruto`, configurable
+          en M7 (por ahora, 20%, a confirmar con la cátedra).
+        - `cobrado_en_efectivo`: lo que el beneficiario ya cobró en mano en los
+          pagos en efectivo.
+        - `monto_neto`: `monto_bruto - comision_plataforma - cobrado_en_efectivo`,
+          lo que se le transfiere. Si da negativo, el beneficiario le debe esa
+          diferencia a la plataforma.
+
+        Ejemplo con 20%: un viaje con tarjeta de $ 10.000 y otro en efectivo
+        de $ 5.000 dan un bruto de $ 15.000, una comisión de $ 3.000 y un neto
+        de $ 7.000. Con los $ 5.000 que ya cobró, el conductor se queda con
+        $ 12.000, el 80% de sus viajes.
+
+        Si `periodo_hasta` es anterior a `periodo_desde`, o no hay pagos para
+        liquidar, `422`. Lo usa un operador.
+      security:
+        - oauth2: ['liquidaciones:write']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiquidacionNueva'
+      responses:
+        '201':
+          description: Liquidación generada.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '422':
+          $ref: '#/components/responses/NoProcesable'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+    get:
+      tags: [Liquidaciones]
+      operationId: listarLiquidaciones
+      summary: Listar liquidaciones
+      description: |
+        Con un token de CONDUCTOR, M7 devuelve solo sus liquidaciones; si pide
+        las de otro `beneficiario_id`, `403`.
+      security:
+        - oauth2: ['liquidaciones:read']
+      parameters:
+        - name: beneficiario_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoLiquidacion'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de liquidaciones.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaLiquidaciones'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/liquidaciones/saldos/{beneficiario_id}:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/BeneficiarioId'
+    get:
+      tags: [Liquidaciones]
+      operationId: obtenerSaldo
+      summary: Consultar el saldo de un beneficiario
+      description: |
+        Un CONDUCTOR solo puede consultar su propio saldo; si no, `403`. Un
+        beneficiario sin pagos tiene todos los importes en 0.
+      security:
+        - oauth2: ['liquidaciones:read']
+      responses:
+        '200':
+          description: Saldo del beneficiario.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Saldo'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/liquidaciones/{liquidacion_id}:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/LiquidacionId'
+    get:
+      tags: [Liquidaciones]
+      operationId: obtenerLiquidacion
+      summary: Consultar una liquidación
+      description: Un CONDUCTOR solo puede consultar sus propias liquidaciones; si no, `403`.
+      security:
+        - oauth2: ['liquidaciones:read']
+      responses:
+        '200':
+          description: Liquidación.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/liquidaciones/{liquidacion_id}/transferencia:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/LiquidacionId'
+    post:
+      tags: [Liquidaciones]
+      operationId: confirmarTransferencia
+      summary: Registrar la transferencia al beneficiario
+      description: |
+        Registra que se le transfirió el monto neto al beneficiario (o, si el
+        neto es negativo, que el beneficiario le pagó esa diferencia a la
+        plataforma): la liquidación pasa de `pendiente` a `transferida`. Si no
+        está `pendiente`, `409`.
+      security:
+        - oauth2: ['liquidaciones:write']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferenciaNueva'
+      responses:
+        '200':
+          description: Liquidación transferida.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '413':
+          $ref: '#/components/responses/CuerpoDemasiadoGrande'
+        '415':
+          $ref: '#/components/responses/TipoNoSoportado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+  /api/v1/liquidaciones/{liquidacion_id}/anulacion:
+    parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/LiquidacionId'
+    post:
+      tags: [Liquidaciones]
+      operationId: anularLiquidacion
+      summary: Anular una liquidación pendiente
+      description: |
+        Anula una liquidación `pendiente` y libera sus pagos para una nueva
+        liquidación. Si no está `pendiente`, `409`. No lleva cuerpo.
+      security:
+        - oauth2: ['liquidaciones:write']
+      responses:
+        '200':
+          description: Liquidación anulada.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+        '503':
+          $ref: '#/components/responses/ServicioNoDisponible'
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: |
+        Tokens de M1 (Keycloak, realm `ds-2026-realm`). Los módulos usan
+        *client credentials*; las personas inician sesión desde una aplicación
+        (*authorization code*). Las URL son las de Keycloak en local. Uso
+        esperado de cada permiso:
+        - `tarifas:read`: M5 y M9 (estimaciones), M6 y operadores (consultas).
+        - `tarifas:write`: M6 (tarifa final) y operadores (reglas).
+        - `pagos:read`: M6, M9, operadores y clientes (sus pagos).
+        - `pagos:write`: M6 y M9 (pagos, cargos y reembolsos) y operadores
+          (reembolsos).
+        - `liquidaciones:read`: operadores y conductores (las suyas).
+        - `liquidaciones:write`: operadores.
+      flows:
+        clientCredentials:
+          tokenUrl: http://localhost:8080/realms/ds-2026-realm/protocol/openid-connect/token
+          scopes:
+            'tarifas:read': Pedir estimaciones y consultar tarifas finales y reglas.
+            'tarifas:write': Registrar tarifas finales y crear o modificar reglas.
+            'pagos:read': Consultar pagos, movimientos y reembolsos.
+            'pagos:write': Registrar pagos, cargos por cancelación y reembolsos.
+            'liquidaciones:read': Consultar liquidaciones y saldos.
+            'liquidaciones:write': Generar, transferir y anular liquidaciones.
+        authorizationCode:
+          authorizationUrl: http://localhost:8080/realms/ds-2026-realm/protocol/openid-connect/auth
+          tokenUrl: http://localhost:8080/realms/ds-2026-realm/protocol/openid-connect/token
+          scopes:
+            'tarifas:read': Pedir estimaciones y consultar tarifas finales y reglas.
+            'tarifas:write': Registrar tarifas finales y crear o modificar reglas.
+            'pagos:read': Consultar pagos, movimientos y reembolsos.
+            'pagos:write': Registrar pagos, cargos por cancelación y reembolsos.
+            'liquidaciones:read': Consultar liquidaciones y saldos.
+            'liquidaciones:write': Generar, transferir y anular liquidaciones.
+
+  parameters:
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: |
+        Identificador de correlación. Vuelve en la respuesta si tiene de 1 a 128
+        caracteres (letras, números, `.`, `_`, `-`); si no llega o no cumple ese
+        formato, M7 genera uno nuevo. Nunca provoca un `400`.
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Número de página, desde 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Elementos por página.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Clave única generada por quien llama (se recomienda UUID). Con la misma
+        clave y el mismo cuerpo se devuelve el resultado original con `200`, sin
+        repetir el efecto; con la misma clave y otro cuerpo, `422`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    XWebhookSecret:
+      name: X-Webhook-Secret
+      in: header
+      required: true
+      description: Secreto compartido entre la pasarela y M7. Se configura fuera del repositorio.
+      schema:
+        type: string
+        minLength: 1
+    ViajeId:
+      name: viaje_id
+      in: path
+      required: true
+      description: Identificador del viaje que asigna M6.
+      schema:
+        type: string
+        format: uuid
+    ReglaId:
+      name: regla_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PagoId:
+      name: pago_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    LiquidacionId:
+      name: liquidacion_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BeneficiarioId:
+      name: beneficiario_id
+      in: path
+      required: true
+      description: |
+        Identificador de quien recibe la liquidación (el conductor o el dueño
+        del vehículo).
+      schema:
+        type: string
+        format: uuid
+
+  headers:
+    Location:
+      description: URL del recurso creado.
+      schema:
+        type: string
+        format: uri-reference
+    XRequestId:
+      description: |
+        Identificador de correlación: el recibido en `X-Request-Id` o, si no
+        llegó, el que generó M7.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._-]{1,128}$'
+    Allow:
+      description: Métodos admitidos por la ruta (por ejemplo, `GET, PATCH`).
+      schema:
+        type: string
+    RetryAfter:
+      description: Segundos sugeridos antes de reintentar.
+      schema:
+        type: integer
+        minimum: 1
+
+  responses:
+    # Errores genéricos: type about:blank (RFC 9457, sección 4.2.1).
+    SolicitudInvalida:
+      description: |
+        Cuerpo, parámetros o encabezados con formato inválido (incluye un
+        identificador de la ruta que no es UUID).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    NoAutenticado:
+      description: Falta el token (o el secreto de la pasarela) o no es válido.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    SinPermiso:
+      description: |
+        El token no tiene el permiso de la operación, o la persona no es la
+        dueña del recurso.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    NoEncontrado:
+      description: El recurso no existe.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    MetodoNoPermitido:
+      description: |
+        La ruta existe pero no admite el método. `Allow` lista los métodos
+        admitidos. Vale para todas las rutas, por eso no se repite en cada una.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Allow:
+          $ref: '#/components/headers/Allow'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    CuerpoDemasiadoGrande:
+      description: El cuerpo supera 1 MiB.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    TipoNoSoportado:
+      description: El `Content-Type` del cuerpo no es `application/json`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    ErrorInterno:
+      description: Error inesperado de M7. No expone detalles internos.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+    ServicioNoDisponible:
+      description: La base de M7 no está disponible.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemaGenerico'
+
+    # Errores de dominio: type propio.
+    Conflicto:
+      description: |
+        El recurso ya existe, su estado no admite la operación, o todavía se
+        está procesando una solicitud con la misma `Idempotency-Key`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    NoProcesable:
+      description: |
+        Formato correcto pero la regla de negocio no se cumple (por ejemplo, no
+        hay una regla de tarifa activa), o se reusó una `Idempotency-Key` con
+        otro cuerpo.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    DependenciaNoDisponible:
+      description: |
+        La pasarela de pago no respondió a tiempo (`type` propio). Si la que no
+        está disponible es la base de M7, el `503` es genérico
+        (`type: about:blank`), como en `ServicioNoDisponible`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+
+  schemas:
+    Problema:
+      type: object
+      description: Error según RFC 9457.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Identifica el tipo de error.
+          examples: ['/errores/sin-regla-activa']
+        title:
+          type: string
+          examples: ['No hay una regla de tarifa activa para el tipo de vehículo']
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+
+    ProblemaGenerico:
+      description: |
+        Error genérico; el `title` es la frase del código HTTP en español:
+        `Solicitud inválida` (400), `No autenticado` (401), `Sin permiso` (403),
+        `No encontrado` (404), `Método no permitido` (405), `Cuerpo demasiado
+        grande` (413), `Tipo de contenido no soportado` (415), `Error interno`
+        (500) y `Servicio no disponible` (503).
+      allOf:
+        - $ref: '#/components/schemas/Problema'
+        - type: object
+          properties:
+            type:
+              const: about:blank
+            title:
+              examples: ['No encontrado']
+
+    Salud:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    Pagina:
+      type: object
+      required: [page, size, total_elementos, total_paginas]
+      properties:
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+        total_elementos:
+          type: integer
+          minimum: 0
+        total_paginas:
+          type: integer
+          minimum: 0
+
+    TipoVehiculo:
+      type: string
+      description: Los tipos de vehículo del enunciado (RF-3.2).
+      enum: [auto, moto]
+
+    MetodoPago:
+      type: string
+      description: |
+        Medio de pago que elige el cliente para este pago (RF-7.2).
+        `billetera_virtual` incluye Mercado Pago.
+      enum: [tarjeta, efectivo, billetera_virtual]
+
+    Moneda:
+      type: string
+      description: Pesos argentinos.
+      const: ARS
+
+    Importe:
+      type: number
+      minimum: 0
+      description: |
+        Importe en pesos argentinos con hasta dos decimales, redondeado al
+        centavo (la mitad hacia arriba). En JSON el separador decimal es el
+        punto.
+      examples: [4850.5]
+    ImporteConSigno:
+      type: number
+      description: Como `Importe`, pero puede ser negativo.
+      examples: [-1500]
+
+    Desglose:
+      type: object
+      description: |
+        Cómo se llegó al total:
+        `total = máximo((tarifa_base + precio_por_km × distancia + precio_por_minuto × duración) × multiplicador_demanda, tarifa_minima)`,
+        redondeado al centavo.
+      required: [tarifa_base, cargo_distancia, cargo_tiempo, multiplicador_demanda, total]
+      properties:
+        tarifa_base:
+          $ref: '#/components/schemas/Importe'
+        cargo_distancia:
+          $ref: '#/components/schemas/Importe'
+        cargo_tiempo:
+          $ref: '#/components/schemas/Importe'
+        multiplicador_demanda:
+          type: number
+          minimum: 1
+        total:
+          $ref: '#/components/schemas/Importe'
+
+    EstimacionNueva:
+      type: object
+      additionalProperties: false
+      required: [tipo_vehiculo, distancia_km, duracion_estimada_min]
+      properties:
+        tipo_vehiculo:
+          $ref: '#/components/schemas/TipoVehiculo'
+        distancia_km:
+          type: number
+          exclusiveMinimum: 0
+          description: Distancia estimada del recorrido en kilómetros, obtenida de M4.
+        duracion_estimada_min:
+          type: number
+          exclusiveMinimum: 0
+          description: Tiempo estimado del recorrido en minutos, obtenido de M4.
+        fecha_hora:
+          type: string
+          format: date-time
+          description: Fecha y hora del viaje, si es una reserva (RF-9.1). Por ahora no cambia el precio.
+        multiplicador_demanda:
+          type: number
+          minimum: 1
+          default: 1
+          description: Recargo por alta demanda. Con 1 no hay recargo.
+
+    Estimacion:
+      type: object
+      required: [regla_id, moneda, desglose]
+      properties:
+        regla_id:
+          type: string
+          format: uuid
+          description: Regla de tarifa que se usó.
+        moneda:
+          $ref: '#/components/schemas/Moneda'
+        desglose:
+          $ref: '#/components/schemas/Desglose'
+
+    TarifaFinalNueva:
+      type: object
+      additionalProperties: false
+      required: [tipo_vehiculo, distancia_real_km, duracion_real_min]
+      properties:
+        tipo_vehiculo:
+          $ref: '#/components/schemas/TipoVehiculo'
+        distancia_real_km:
+          type: number
+          exclusiveMinimum: 0
+        duracion_real_min:
+          type: number
+          exclusiveMinimum: 0
+        multiplicador_demanda:
+          type: number
+          minimum: 1
+          default: 1
+          description: Recargo por alta demanda. Con 1 no hay recargo.
+
+    TarifaFinal:
+      type: object
+      required: [viaje_id, regla_id, moneda, desglose, calculada_en]
+      properties:
+        viaje_id:
+          type: string
+          format: uuid
+        regla_id:
+          type: string
+          format: uuid
+          description: Regla de tarifa que se usó.
+        moneda:
+          $ref: '#/components/schemas/Moneda'
+        desglose:
+          $ref: '#/components/schemas/Desglose'
+        calculada_en:
+          type: string
+          format: date-time
+
+    ReglaTarifaNueva:
+      type: object
+      additionalProperties: false
+      required: [tipo_vehiculo, tarifa_base, precio_por_km, precio_por_minuto, tarifa_minima]
+      properties:
+        tipo_vehiculo:
+          $ref: '#/components/schemas/TipoVehiculo'
+        tarifa_base:
+          $ref: '#/components/schemas/Importe'
+        precio_por_km:
+          $ref: '#/components/schemas/Importe'
+        precio_por_minuto:
+          $ref: '#/components/schemas/Importe'
+        tarifa_minima:
+          $ref: '#/components/schemas/Importe'
+          description: Precio mínimo de un viaje. Con 0 no hay mínimo.
+        cargo_cancelacion:
+          $ref: '#/components/schemas/Importe'
+          default: 0
+          description: Monto fijo que se cobra por una cancelación con cargo (RF-7.4).
+        activa:
+          type: boolean
+          default: true
+
+    ReglaTarifaCambios:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Solo los campos que cambian. El tipo de vehículo no se puede cambiar.
+      properties:
+        tarifa_base:
+          $ref: '#/components/schemas/Importe'
+        precio_por_km:
+          $ref: '#/components/schemas/Importe'
+        precio_por_minuto:
+          $ref: '#/components/schemas/Importe'
+        tarifa_minima:
+          $ref: '#/components/schemas/Importe'
+        cargo_cancelacion:
+          $ref: '#/components/schemas/Importe'
+        activa:
+          type: boolean
+
+    ReglaTarifa:
+      type: object
+      required: [id, tipo_vehiculo, tarifa_base, precio_por_km, precio_por_minuto, tarifa_minima, cargo_cancelacion, activa]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tipo_vehiculo:
+          $ref: '#/components/schemas/TipoVehiculo'
+        tarifa_base:
+          $ref: '#/components/schemas/Importe'
+        precio_por_km:
+          $ref: '#/components/schemas/Importe'
+        precio_por_minuto:
+          $ref: '#/components/schemas/Importe'
+        tarifa_minima:
+          $ref: '#/components/schemas/Importe'
+        cargo_cancelacion:
+          $ref: '#/components/schemas/Importe'
+        activa:
+          type: boolean
+
+    PaginaReglas:
+      allOf:
+        - $ref: '#/components/schemas/Pagina'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReglaTarifa'
+
+    ConceptoPago:
+      type: string
+      description: |
+        `viaje`: el pago de un viaje. `cargo_cancelacion`: el cargo fijo por
+        una cancelación.
+      enum: [viaje, cargo_cancelacion]
+
+    EstadoPago:
+      type: string
+      description: |
+        - `pendiente`: M7 espera el aviso de la pasarela.
+        - `aprobado`: cobrado (en efectivo, en el acto).
+        - `rechazado`: la pasarela lo rechazó.
+        - `reembolsado` y `reembolsado_parcial`: se devolvió todo o una parte.
+      enum: [pendiente, aprobado, rechazado, reembolsado, reembolsado_parcial]
+
+    PagoNuevo:
+      type: object
+      additionalProperties: false
+      required: [viaje_id, cliente_id, beneficiario_id, monto, metodo]
+      properties:
+        viaje_id:
+          type: string
+          format: uuid
+        reserva_id:
+          type: string
+          format: uuid
+          description: Si el viaje viene de una reserva (RF-5.2).
+        cliente_id:
+          type: string
+          format: uuid
+        beneficiario_id:
+          type: string
+          format: uuid
+          description: Conductor o dueño del vehículo que recibe el pago en la liquidación.
+        monto:
+          type: number
+          exclusiveMinimum: 0
+          description: Total de la tarifa final del viaje.
+        metodo:
+          $ref: '#/components/schemas/MetodoPago'
+
+    CargoCancelacionNuevo:
+      type: object
+      additionalProperties: false
+      required: [cliente_id, tipo_vehiculo, metodo, motivo]
+      description: Lleva `viaje_id`, `reserva_id` o los dos.
+      anyOf:
+        - required: [viaje_id]
+        - required: [reserva_id]
+      properties:
+        viaje_id:
+          type: string
+          format: uuid
+        reserva_id:
+          type: string
+          format: uuid
+        cliente_id:
+          type: string
+          format: uuid
+        tipo_vehiculo:
+          $ref: '#/components/schemas/TipoVehiculo'
+        metodo:
+          type: string
+          description: Medio de pago del cargo. No se acepta efectivo.
+          enum: [tarjeta, billetera_virtual]
+        motivo:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    Pago:
+      type: object
+      required: [id, concepto, cliente_id, monto, monto_reembolsado, moneda, metodo, estado, creado_en, actualizado_en]
+      properties:
+        id:
+          type: string
+          format: uuid
+        concepto:
+          $ref: '#/components/schemas/ConceptoPago'
+        viaje_id:
+          type: string
+          format: uuid
+        reserva_id:
+          type: string
+          format: uuid
+        cliente_id:
+          type: string
+          format: uuid
+        beneficiario_id:
+          type: string
+          format: uuid
+          description: No lo tienen los cargos por cancelación.
+        monto:
+          $ref: '#/components/schemas/Importe'
+        monto_reembolsado:
+          $ref: '#/components/schemas/Importe'
+          description: 0 si no hubo reembolsos.
+        moneda:
+          $ref: '#/components/schemas/Moneda'
+        metodo:
+          $ref: '#/components/schemas/MetodoPago'
+        estado:
+          $ref: '#/components/schemas/EstadoPago'
+        referencia_externa:
+          type: string
+          description: Identificador de la operación en la pasarela. Nunca guarda datos de la tarjeta (RNF-19).
+        creado_en:
+          type: string
+          format: date-time
+        actualizado_en:
+          type: string
+          format: date-time
+
+    PaginaPagos:
+      allOf:
+        - $ref: '#/components/schemas/Pagina'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Pago'
+
+    AvisoPasarela:
+      type: object
+      additionalProperties: false
+      required: [referencia_externa, pago_id, estado]
+      properties:
+        referencia_externa:
+          type: string
+          minLength: 1
+        pago_id:
+          type: string
+          format: uuid
+        estado:
+          type: string
+          description: Resultado del cobro.
+          enum: [aprobado, rechazado]
+
+    TipoMovimiento:
+      type: string
+      description: |
+        - `registro`: se registró el pago.
+        - `aprobacion`: el pago quedó cobrado.
+        - `rechazo`: la pasarela lo rechazó.
+        - `reembolso`: se devolvió todo o una parte.
+      enum: [registro, aprobacion, rechazo, reembolso]
+
+    Movimiento:
+      type: object
+      required: [id, pago_id, tipo, monto, fecha, actor]
+      properties:
+        id:
+          type: string
+          format: uuid
+        pago_id:
+          type: string
+          format: uuid
+        tipo:
+          $ref: '#/components/schemas/TipoMovimiento'
+        monto:
+          $ref: '#/components/schemas/Importe'
+        fecha:
+          type: string
+          format: date-time
+        actor:
+          type: string
+          description: '`sub` del token de quien lo hizo, o `pasarela` si llegó por su aviso.'
+        detalle:
+          type: string
+          description: Motivo o dato adicional, sin datos sensibles.
+
+    PaginaMovimientos:
+      allOf:
+        - $ref: '#/components/schemas/Pagina'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Movimiento'
+
+    ReembolsoNuevo:
+      type: object
+      additionalProperties: false
+      required: [motivo]
+      properties:
+        monto:
+          type: number
+          exclusiveMinimum: 0
+          description: Monto a reembolsar. Si no llega, se reembolsa todo lo que queda.
+        motivo:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    Reembolso:
+      type: object
+      required: [id, pago_id, monto, motivo, creado_en]
+      properties:
+        id:
+          type: string
+          format: uuid
+        pago_id:
+          type: string
+          format: uuid
+        monto:
+          $ref: '#/components/schemas/Importe'
+        motivo:
+          type: string
+        creado_en:
+          type: string
+          format: date-time
+
+    PaginaReembolsos:
+      allOf:
+        - $ref: '#/components/schemas/Pagina'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Reembolso'
+
+    EstadoLiquidacion:
+      type: string
+      description: |
+        - `pendiente`: calculada, falta transferirla.
+        - `transferida`: se le transfirió al beneficiario.
+        - `anulada`: se anuló y sus pagos quedaron libres.
+      enum: [pendiente, transferida, anulada]
+
+    LiquidacionNueva:
+      type: object
+      additionalProperties: false
+      required: [beneficiario_id, periodo_desde, periodo_hasta]
+      properties:
+        beneficiario_id:
+          type: string
+          format: uuid
+        periodo_desde:
+          type: string
+          format: date
+          description: Primer día del período, incluido.
+        periodo_hasta:
+          type: string
+          format: date
+          description: Último día del período, incluido.
+
+    Liquidacion:
+      type: object
+      required: [id, beneficiario_id, periodo_desde, periodo_hasta, pago_ids, monto_bruto, comision_plataforma, cobrado_en_efectivo, monto_neto, moneda, estado, creada_en, actualizada_en]
+      properties:
+        id:
+          type: string
+          format: uuid
+        beneficiario_id:
+          type: string
+          format: uuid
+        periodo_desde:
+          type: string
+          format: date
+        periodo_hasta:
+          type: string
+          format: date
+        pago_ids:
+          type: array
+          description: Pagos incluidos en la liquidación.
+          items:
+            type: string
+            format: uuid
+        monto_bruto:
+          $ref: '#/components/schemas/Importe'
+          description: Suma de lo cobrado en esos pagos, sin lo reembolsado.
+        comision_plataforma:
+          $ref: '#/components/schemas/Importe'
+        cobrado_en_efectivo:
+          $ref: '#/components/schemas/Importe'
+          description: Lo que el beneficiario ya cobró en mano en los pagos en efectivo.
+        monto_neto:
+          $ref: '#/components/schemas/ImporteConSigno'
+          description: |
+            `monto_bruto - comision_plataforma - cobrado_en_efectivo`: lo que se
+            le transfiere al beneficiario. Si es negativo, el beneficiario le
+            debe esa diferencia a la plataforma.
+        moneda:
+          $ref: '#/components/schemas/Moneda'
+        estado:
+          $ref: '#/components/schemas/EstadoLiquidacion'
+        referencia_transferencia:
+          type: string
+        creada_en:
+          type: string
+          format: date-time
+        actualizada_en:
+          type: string
+          format: date-time
+
+    PaginaLiquidaciones:
+      allOf:
+        - $ref: '#/components/schemas/Pagina'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Liquidacion'
+
+    TransferenciaNueva:
+      type: object
+      additionalProperties: false
+      required: [referencia_transferencia]
+      properties:
+        referencia_transferencia:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Comprobante o número de la transferencia.
+
+    Saldo:
+      type: object
+      required: [beneficiario_id, saldo_pendiente_liquidar, liquidado_pendiente_transferir, total_transferido, moneda]
+      properties:
+        beneficiario_id:
+          type: string
+          format: uuid
+        saldo_pendiente_liquidar:
+          $ref: '#/components/schemas/Importe'
+          description: Lo cobrado (antes de la comisión) en pagos que todavía no están en una liquidación.
+        liquidado_pendiente_transferir:
+          $ref: '#/components/schemas/ImporteConSigno'
+          description: Suma del monto neto de las liquidaciones `pendiente`; puede ser negativa.
+        total_transferido:
+          $ref: '#/components/schemas/ImporteConSigno'
+          description: Suma del monto neto de las liquidaciones `transferida`; puede ser negativa.
+        moneda:
+          $ref: '#/components/schemas/Moneda'
