@@ -30,6 +30,14 @@ export function validarConfiguracion(env: Record<string, unknown>): Record<strin
     }
   }
 
+  const registroTarifa = env.REGISTRO_TARIFA ?? 'ninguno';
+  if (registroTarifa !== 'ninguno' && registroTarifa !== 'm7') {
+    errores.push('REGISTRO_TARIFA debe ser "ninguno" o "m7"');
+  }
+  if (registroTarifa === 'm7' && !env.M7_URL) {
+    errores.push('M7_URL es obligatoria cuando REGISTRO_TARIFA=m7');
+  }
+
   const persistencia = env.PERSISTENCIA ?? 'memoria';
   if (persistencia !== 'memoria' && persistencia !== 'postgres') {
     errores.push('PERSISTENCIA debe ser "memoria" o "postgres"');
@@ -58,7 +66,7 @@ export function validarConfiguracion(env: Record<string, unknown>): Record<strin
     errores.push('LOG_FORMATO debe ser "json" o "texto"');
   }
 
-  for (const nombre of ['LIMITE_PEDIDOS_POR_MINUTO', 'LIMITE_PEDIDOS_SERVICIO_POR_MINUTO', 'REDIS_TIMEOUT_MS', 'OUTBOX_INTERVALO_MS', 'OUTBOX_TAMANIO_LOTE', 'RABBITMQ_TIMEOUT_MS', 'PUERTO', 'ESPERA_MINIMA_ARRIBO_MINUTOS', 'M8_TIMEOUT_MS']) {
+  for (const nombre of ['LIMITE_PEDIDOS_POR_MINUTO', 'LIMITE_PEDIDOS_SERVICIO_POR_MINUTO', 'REDIS_TIMEOUT_MS', 'OUTBOX_INTERVALO_MS', 'OUTBOX_TAMANIO_LOTE', 'RABBITMQ_TIMEOUT_MS', 'PUERTO', 'ESPERA_MINIMA_ARRIBO_MINUTOS', 'M8_TIMEOUT_MS', 'M7_TIMEOUT_MS']) {
     if (env[nombre] !== undefined && !(Number(env[nombre]) >= 0)) {
       errores.push(`${nombre} debe ser un número`);
     }

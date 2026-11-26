@@ -83,6 +83,10 @@ services:
       M8_G10_URL: ${M8_G10_URL:-}
       M8_G10_RUTA_QR: ${M8_G10_RUTA_QR:-}
       M8_G10_TOKEN: ${M8_G10_TOKEN:-}
+      REGISTRO_TARIFA: ${REGISTRO_TARIFA:-ninguno}
+      M7_URL: ${M7_URL:-}
+      M7_TOKEN: ${M7_TOKEN:-}
+      M7_TIMEOUT_MS: ${M7_TIMEOUT_MS:-2000}
       ESPERA_MINIMA_ARRIBO_MINUTOS: ${ESPERA_MINIMA_ARRIBO_MINUTOS:-5}
     ports:
       - "${PUERTO:-3000}:3000"

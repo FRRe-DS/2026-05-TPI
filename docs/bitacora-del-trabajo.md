@@ -921,6 +921,117 @@ validan (redocly y AsyncAPI).
 porque su healthcheck espera sólo 10 s y el arranque (OpenSSL + Prisma) tarda más. Se le dio más
 margen en `demo/integracion-m8/docker-compose.yml`.
 
+## Paso 22 – Conectar M6 con M7: tarifa final, pago y cargo de cancelación (Grupos 6 y 11)
+
+Trabajado en la rama `integracion-m7-tarifa-final`.
+
+**Qué se encontró:** los dos grupos de M7 publicaron un contrato común en el repo de la cátedra
+(`contratos/m7_tarifas/openapi.yml`; el Grupo 6 lo usa como submódulo). Según ese contrato, M7 no
+escucha nuestros eventos para cobrar: M6 tiene que llamarlo por REST al completar el viaje
+(tarifa final y pago) y al cancelar con cargo. Del Grupo 6 ya funcionan las rutas de tarifas; las
+de pagos y cargos todavía no. El código del Grupo 11 usa otras rutas.
+
+**Qué se hizo (lo mínimo para quedar conectados):**
+- Puerto `RegistradorCobro` con dos implementaciones, elegidas con `REGISTRO_TARIFA`: `ninguno`
+  (por defecto, no hace nada) y `m7` (`registrador-cobro.m7.ts`).
+- **Al completar el viaje**, después de guardarlo:
+  1. `POST /api/v1/tarifas/viajes/{viaje_id}/tarifa-final` con `tipo_vehiculo` en minúsculas,
+     `distancia_real_km` y `duracion_real_min` (los segundos pasados a minutos; nunca 0, porque M7
+     exige más de 0). Si responde `409` (ya estaba), se lee el total con `GET`.
+  2. `POST /api/v1/pagos` por `desglose.total`, con `Idempotency-Key: m6-pago-<viaje_id>`.
+- **Al cancelar**, si corresponde cargo según la regla R6-05 (`dominio/cargo-cancelacion.ts`): el
+  cliente cancela con el conductor ya en el lugar, o el conductor cancela con `CLIENT_NO_SHOW`. Se
+  llama a `POST /api/v1/cargos-cancelacion` con `Idempotency-Key: m6-cargo-<viaje_id>`.
+- **No se manda `metodo`** (medio de pago): ningún contrato se lo pasa a M6. Le proponemos al
+  Grupo 6 que lo resuelva M7 con el medio que eligió el cliente (RF-7.2). Esta decisión, la regla
+  del cargo y el orden tarifa → pago están en `docs/para-grupo-6-integracion-m7.md` para que las
+  confirmen.
+- Si M7 falla o no responde en `M7_TIMEOUT_MS`, el viaje igual queda completado o cancelado y el
+  error va al log. `200` y `409` no se tratan como error.
+- Se configura un solo M7 (`M7_URL`): a diferencia del QR de M8, llamar a los dos duplicaría el cobro.
+
+**Qué no se tocó:** la API de M6 (`contratos/openapi.yaml`, igual al del Grupo 12), los eventos
+(AsyncAPI), la validación del QR con M8 ni la base de datos. Con el valor por defecto todo
+funciona como antes.
+
+**Limitaciones de hacerlo simple** (sin reintentos ni cola):
+- Si M7 falla, esa tarifa, pago o cargo no se vuelve a mandar solo: hay que registrarlo a mano en
+  M7 (repetir la acción en M6 no vuelve a llamar).
+- `complete` puede tardar hasta tres veces `M7_TIMEOUT_MS` (2 s por defecto) más si M7 no
+  responde; `cancel`, hasta una vez.
+- Hasta que M7 acepte el pago y el cargo sin `metodo`, esas dos llamadas van a fallar y dejar un
+  error en el log por cada viaje.
+
+**Cómo se probó:**
+- `npm run typecheck` sin errores. `npm test`: 91 unitarios y 67 de integración en memoria, en
+  verde. Nuevos: `registrador-cobro.m7.spec.ts` (cuerpos, orden tarifa → pago, `409`, fallos),
+  `cargo-cancelacion.spec.ts` (la regla) y `test/cobro-m7.e2e-spec.ts` (cuándo avisa el servicio).
+- Prueba real contra el M7 del Grupo 6 (corrido con Python, SQLite y `AUTH_DISABLED=true`): se
+  crearon reglas para auto y moto y se recorrió un viaje en M6 hasta `complete`. M7 respondió
+  `201` a la tarifa final con la regla de moto: base 500 + 4,2 km × 300 + 0,01 min × 50 = 1760,5
+  (el viaje de prueba duró menos de un segundo). M6 mandó el pago por 1760,5 y M7 respondió `404`,
+  porque todavía no tiene esa ruta; el viaje quedó completado igual.
+- Con M7 apagado, `complete` respondió `200` igual y quedó el error en el log.
+- El pago y el cargo sólo se probaron con respuestas simuladas.
+
+## Paso 23 – Telemetría con OpenTelemetry (trazas, métricas y logs)
+
+Trabajado en la rama `telemetria` y unido a `main` con el PR #3 (18/11). Lo hizo el estudiante de
+5.º año que arma el dashboard de telemetría (opsboard), que necesita leer los datos de M6. El grupo
+revisó el código y lo aceptó.
+
+**Qué se hizo:**
+- **Arranque de OpenTelemetry** en `src/telemetria/instrumentacion.ts`, importado en la primera
+  línea de `main.ts` (tiene que cargarse antes que `http`, `pg`, etc. para poder engancharlos).
+- **Apagado por defecto:** sólo se activa si está `OTEL_EXPORTER_OTLP_ENDPOINT`. Sin esa variable
+  (tests, desarrollo) todo funciona igual que antes. La configuración sale de las variables
+  estándar `OTEL_*` (RNF-06), documentadas en `.env.example`.
+- **Trazas automáticas** de pedidos HTTP, Express, NestJS, PostgreSQL, Redis, RabbitMQ y las
+  llamadas por `fetch` (la validación del QR con M8). Para no llenar de ruido se ignoran los
+  `/health`, los middlewares de Express y las consultas del relevador de eventos que no nacen de un
+  pedido.
+- **Spans propios** para cada operación del ciclo de vida (`trip.create`, `trip.start`, etc.) y
+  uno aparte para la validación del QR (`m8.validarCodigo`).
+- **Tres métricas propias** (`src/telemetria/metricas.ts`, prefijo `m6_` según la convención de
+  opsboard):
+  1. `m6_trip_transitions`: transiciones, por estado de origen, de destino y rol del actor.
+  2. `m6_trip_cancellations`: cancelaciones, por rol y motivo.
+  3. `m6_transition_duration`: duración de cada operación, en segundos, con el resultado.
+
+  Las etiquetas son siempre categorías cerradas, nunca un id de viaje o de usuario, para no crear
+  una serie nueva en Prometheus por cada valor.
+- **Métricas técnicas:** CPU y memoria del proceso, event loop, GC y heap.
+- **Logs:** cada línea JSON lleva `trace_id` y `span_id` si hay una traza activa (en Grafana se
+  salta del log a la traza) y también se manda por OTLP hacia Loki. Se mantiene RNF-19: no se
+  envían tokens, cuerpos de pedidos ni coordenadas.
+
+**Cómo usarlo:** levantar el stack de `opsboard-tpi-devops/observabilidad` (`docker compose up -d`)
+y en el `.env` de M6 poner `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`,
+`OTEL_SERVICE_NAME=m6-grupo5` y `OTEL_RESOURCE_ATTRIBUTES=grupo=5`.
+
+**Cómo se probó:** CI del PR en verde (tipos, tests, contratos e imagen Docker). Ya en `main`,
+local: `npm run typecheck` sin errores; `npm test` con 74 unitarios y 63 de integración en memoria
+en verde (los 16 contra PostgreSQL, Redis y RabbitMQ reales quedan para `npm run test:infra`). No se
+probó todavía el envío real a un stack de observabilidad.
+
+**Observaciones de la revisión** (no bloqueaban el PR):
+- No hay tests propios para las métricas.
+- Las etiquetas de la métrica de duración mezclan idiomas (`action` y `resultado`).
+- Si además se recolectan los logs de la salida de Docker, en Loki podrían aparecer duplicados.
+
+## Paso 24 – Unir M7 con la telemetría y pasar todo a `main`
+
+La rama de M7 (paso 22) se había creado antes de la telemetría (paso 23) y las dos cambiaban
+`viajes.service.ts` y `.env.example`. Se unió `main` en `integracion-m7-tarifa-final` y se
+resolvieron los conflictos:
+- `.env.example`: quedan las variables de M7 y las de OpenTelemetry.
+- `viajes.service.ts`: `finalizar` y `cancelar` se miden con la telemetría (`AccionViaje.COMPLETE` y
+  `CANCEL`) y además avisan a M7. Las llamadas a M7 quedan en su propio span
+  (`m7.viajeCompletado`, `m7.cargoCancelacion`), así en Jaeger se ve cuánto tarda M7.
+
+**Cómo se probó:** `npm run typecheck` sin errores; `npm test` con 91 unitarios y 67 de integración
+en memoria, en verde. Se unió a `main` con el PR #4 (18/11).
+
 ## Problemas que aparecieron al probar y cómo se resolvieron
 
 | Síntoma | Causa | Solución |
@@ -980,7 +1091,7 @@ grupo-5-dds/
 | RNF-09 Idempotencia (TP2) | Cumplido en M6 | `Idempotency-Key` en Redis, creación por `assignmentId`, eventos con `eventId` |
 | RNF-10 Mensajería (TP2) | Cumplido | RabbitMQ + outbox, ADR-003 |
 | RNF-11 Caché y vencimiento (TP2) | Cumplido | Redis para `Idempotency-Key`, ADR-004 |
-| RNF-14 Salud y diagnóstico (TP2) | Cumplido | `/health`, `/health/details`, logs JSON con `correlationId`/`tripId` |
+| RNF-14 Salud y diagnóstico (TP2) | Cumplido | `/health`, `/health/details`, logs JSON con `correlationId`/`tripId`; trazas, métricas y logs por OpenTelemetry (paso 23) |
 | RNF-17 Automatización (TP2) | Cumplido | `.github/workflows/m6-viajes.yml`, corridas en verde en GitHub |
 | RNF-12 Seguridad (TP2-TP3) | Cumplido (falta el token real de M1) | JWT con `exp`, roles, límite de pedidos, helmet, cuerpos acotados, `npm audit` en CI, ADR-005 |
 | RNF-13 Resiliencia (TP2) | Cumplido | Timeouts con M8, RabbitMQ y Redis; eventos que esperan si el broker se cae; sin Redis se sigue operando; sobrevive a la caída de PostgreSQL |
@@ -996,4 +1107,33 @@ grupo-5-dds/
    - **Seguridad con M1:** cuando se acuerde el formato, validar los tokens reales de M1
      (idealmente RS256 con clave pública, configurando `JWT_EMISOR` y `JWT_AUDIENCIA`).
    - **Integración distribuida (RNF-07):** probar M6 junto con los módulos de los otros grupos.
+3. **M7 (Grupos 6 y 11)**, después del paso 22:
+   - **Enviar `docs/para-grupo-6-integracion-m7.md`** al Grupo 6 (y al Grupo 11, que comparte el
+     contrato) y esperar que confirmen las decisiones A (M6 no manda `metodo`), B (regla del cargo,
+     R6-05) y C (tarifa final → pago).
+   - **Según lo que respondan:** si rechazan A, agregar `metodo` al pago y al cargo y definir de
+     dónde sale; si cambian B, ajustar `dominio/cargo-cancelacion.ts` y sus tests.
+   - **Cuando el Grupo 6 tenga `/api/v1/pagos` y `/api/v1/cargos-cancelacion`:** repetir la prueba
+     real (hasta ahora el pago y el cargo sólo se probaron con respuestas simuladas).
+   - **Correr lo que faltó probar del paso 22:** `npm run test:infra` (16 tests con PostgreSQL,
+     Redis y RabbitMQ) y M6 en Docker con `REGISTRO_TARIFA=m7`
+     (`M7_URL=http://host.docker.internal:8000`).
+4. **Token de servicio que se renueve solo** (para M7 y M8; va junto con "Seguridad con M1"):
+   - **Problema:** hoy M6 manda a M7 y a M8 un token fijo, copiado a mano en el `.env`
+     (`M7_TOKEN`, `M8_G7_TOKEN`, `M8_G10_TOKEN`). Los tokens de Keycloak vencen (5 minutos por
+     defecto, y el realm `ds-2026-realm` no cambia ese valor). Cuando M7 y M8 validen tokens, un
+     token fijo deja de servir a los pocos minutos y las llamadas reciben `401`.
+   - **Qué hacer:** que M6 le pida su propio token a Keycloak con *client credentials*
+     (`POST /realms/ds-2026-realm/protocol/openid-connect/token` con `grant_type=client_credentials`,
+     `client_id=grupo-05` y la clave del cliente), lo guarde y pida otro antes de que venza.
+     Reemplaza a las variables `*_TOKEN` por la URL de Keycloak y la clave del cliente.
+   - **Cuándo:** cuando M7 (o M8) empiece a validar tokens y el realm tenga los scopes
+     `tarifas:*` y `pagos:*` para `grupo-05`. Antes no se puede probar.
+   - **Cuidado:** la clave del cliente `grupo-05` está en el archivo del realm del repo de la
+     cátedra. No copiarla en este repo: va sólo en el `.env`, que no se sube.
+5. **Telemetría**, después del paso 23:
+   - **Probar con el stack de opsboard:** levantar M6 con `OTEL_EXPORTER_OTLP_ENDPOINT` y verificar
+     que las trazas, las métricas `m6_*` y los logs lleguen al dashboard.
+   - **Tests de las métricas:** agregar alguno que verifique `registrarTransicion` y
+     `medirOperacion`.
 

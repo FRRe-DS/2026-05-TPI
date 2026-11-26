@@ -7,7 +7,13 @@ import { AppModule } from '../src/app.module';
 import { CONFIGURACION_LIMITE, ConfiguracionLimite } from '../src/comun/limite/limite-pedidos.guard';
 import { configurarSeguridad } from '../src/comun/seguridad';
 import { ALMACEN_IDEMPOTENCIA, AlmacenIdempotencia } from '../src/comun/idempotencia/almacen';
-import { PUBLICADOR_EVENTOS, VALIDADOR_CODIGO, ValidadorCodigoVerificacion } from '../src/viajes/aplicacion/puertos';
+import {
+  PUBLICADOR_EVENTOS,
+  REGISTRADOR_COBRO,
+  RegistradorCobro,
+  VALIDADOR_CODIGO,
+  ValidadorCodigoVerificacion,
+} from '../src/viajes/aplicacion/puertos';
 import { RelevadorDeEventos } from '../src/viajes/aplicacion/relevador-de-eventos';
 import { PublicadorEventosEnLog } from '../src/viajes/infraestructura/publicador-eventos.log';
 import { Pool } from 'pg';
@@ -25,6 +31,7 @@ export interface OpcionesApp {
   validador?: ValidadorCodigoVerificacion;
   almacenIdempotencia?: AlmacenIdempotencia;
   limite?: ConfiguracionLimite;
+  registradorCobro?: RegistradorCobro;
 }
 
 /** Levanta la aplicación completa, opcionalmente reemplazando el validador de QR o el almacén de idempotencia. */
@@ -35,6 +42,9 @@ export async function crearApp(opciones: OpcionesApp = {}): Promise<AppDePrueba>
   }
   if (opciones.limite) {
     builder = builder.overrideProvider(CONFIGURACION_LIMITE).useValue(opciones.limite);
+  }
+  if (opciones.registradorCobro) {
+    builder = builder.overrideProvider(REGISTRADOR_COBRO).useValue(opciones.registradorCobro);
   }
   if (opciones.almacenIdempotencia) {
     builder = builder.overrideProvider(ALMACEN_IDEMPOTENCIA).useValue(opciones.almacenIdempotencia);
